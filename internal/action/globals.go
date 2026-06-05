@@ -11,6 +11,10 @@ var LogBufPane *BufPane
 // InitGlobals initializes the log buffer and the info bar
 func InitGlobals() {
 	InfoBar = NewInfoBar()
+	Panels = NewPanelManager()
+	if Tabs != nil {
+		Tabs.Resize()
+	}
 	buffer.LogBuf = buffer.NewBufferFromString("", "", buffer.BTLog)
 	buffer.LogBuf.SetName("Log")
 }

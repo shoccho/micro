@@ -254,6 +254,12 @@ type BufPane struct {
 	// since we may not know the window geometry yet. In such case we finish
 	// its initialization a bit later, after the initial resize.
 	initialized bool
+
+	PickerRoot    string
+	PickerEntries []pickerEntry
+	PickerIdx     int
+	IsPicker      bool
+	OrigPane      *BufPane
 }
 
 func newBufPane(buf *buffer.Buffer, win display.BWindow, tab *Tab) *BufPane {
@@ -426,6 +432,10 @@ func (h *BufPane) getReloadSetting() string {
 
 // HandleEvent executes the tcell event properly
 func (h *BufPane) HandleEvent(event tcell.Event) {
+	if h.IsPicker {
+		h.PickerHandleEvent(event)
+		return
+	}
 	if h.Buf.ExternallyModified() && !h.Buf.ReloadDisabled {
 		reload := h.getReloadSetting()
 
@@ -794,6 +804,7 @@ var BufKeyActions = map[string]BufKeyAction{
 	"PastePrimary":              (*BufPane).PastePrimary,
 	"SelectAll":                 (*BufPane).SelectAll,
 	"OpenFile":                  (*BufPane).OpenFile,
+	"OpenFilePicker":            (*BufPane).OpenFilePicker,
 	"Start":                     (*BufPane).Start,
 	"End":                       (*BufPane).End,
 	"PageUp":                    (*BufPane).PageUp,
@@ -816,6 +827,15 @@ var BufKeyActions = map[string]BufKeyAction{
 	"ClearStatus":               (*BufPane).ClearStatus,
 	"ShellMode":                 (*BufPane).ShellMode,
 	"CommandMode":               (*BufPane).CommandMode,
+	"CommandPalette":            (*BufPane).CommandPalette,
+	"ToggleExplorer":            (*BufPane).ToggleExplorer,
+	"FocusExplorer":             (*BufPane).FocusExplorer,
+	"ToggleTerminal":            (*BufPane).ToggleTerminal,
+	"FocusTerminal":             (*BufPane).FocusTerminal,
+	"ExplorerNewFile":           (*BufPane).ExplorerNewFile,
+	"ExplorerNewFolder":         (*BufPane).ExplorerNewFolder,
+	"ExplorerRename":            (*BufPane).ExplorerRename,
+	"ExplorerDelete":            (*BufPane).ExplorerDelete,
 	"ToggleOverwriteMode":       (*BufPane).ToggleOverwriteMode,
 	"Escape":                    (*BufPane).Escape,
 	"Quit":                      (*BufPane).Quit,
@@ -850,6 +870,7 @@ var BufKeyActions = map[string]BufKeyAction{
 	"JumpLine":                  (*BufPane).JumpLine,
 	"Deselect":                  (*BufPane).Deselect,
 	"ClearInfo":                 (*BufPane).ClearInfo,
+	"RunCommand":                (*BufPane).RunCommand,
 	"None":                      (*BufPane).None,
 
 	// This was changed to InsertNewline but I don't want to break backwards compatibility

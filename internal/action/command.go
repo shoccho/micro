@@ -24,49 +24,77 @@ import (
 // A Command contains information about how to execute a command
 // It has the action for that command as well as a completer function
 type Command struct {
+	name        string
+	title       string
+	description string
+	usage       string
+	category    string
 	action    func(*BufPane, []string)
 	completer buffer.Completer
 }
 
 var commands map[string]Command
 
+func command(name, title, description, usage, category string, action func(*BufPane, []string), completer buffer.Completer) Command {
+	if title == "" {
+		title = name
+	}
+	if usage == "" {
+		usage = name
+	}
+	if category == "" {
+		category = "General"
+	}
+	return Command{name: name, title: title, description: description, usage: usage, category: category, action: action, completer: completer}
+}
+
 func InitCommands() {
 	commands = map[string]Command{
-		"set":         {(*BufPane).SetCmd, OptionValueComplete},
-		"setlocal":    {(*BufPane).SetLocalCmd, OptionValueComplete},
-		"toggle":      {(*BufPane).ToggleCmd, OptionValueComplete},
-		"togglelocal": {(*BufPane).ToggleLocalCmd, OptionValueComplete},
-		"reset":       {(*BufPane).ResetCmd, OptionValueComplete},
-		"show":        {(*BufPane).ShowCmd, OptionComplete},
-		"showkey":     {(*BufPane).ShowKeyCmd, nil},
-		"run":         {(*BufPane).RunCmd, nil},
-		"bind":        {(*BufPane).BindCmd, nil},
-		"unbind":      {(*BufPane).UnbindCmd, nil},
-		"quit":        {(*BufPane).QuitCmd, nil},
-		"goto":        {(*BufPane).GotoCmd, nil},
-		"jump":        {(*BufPane).JumpCmd, nil},
-		"save":        {(*BufPane).SaveCmd, nil},
-		"replace":     {(*BufPane).ReplaceCmd, nil},
-		"replaceall":  {(*BufPane).ReplaceAllCmd, nil},
-		"vsplit":      {(*BufPane).VSplitCmd, buffer.FileComplete},
-		"hsplit":      {(*BufPane).HSplitCmd, buffer.FileComplete},
-		"tab":         {(*BufPane).NewTabCmd, buffer.FileComplete},
-		"help":        {(*BufPane).HelpCmd, HelpComplete},
-		"eval":        {(*BufPane).EvalCmd, nil},
-		"log":         {(*BufPane).ToggleLogCmd, nil},
-		"plugin":      {(*BufPane).PluginCmd, PluginComplete},
-		"reload":      {(*BufPane).ReloadCmd, nil},
-		"reopen":      {(*BufPane).ReopenCmd, nil},
-		"cd":          {(*BufPane).CdCmd, buffer.FileComplete},
-		"pwd":         {(*BufPane).PwdCmd, nil},
-		"open":        {(*BufPane).OpenCmd, buffer.FileComplete},
-		"tabmove":     {(*BufPane).TabMoveCmd, nil},
-		"tabswitch":   {(*BufPane).TabSwitchCmd, nil},
-		"term":        {(*BufPane).TermCmd, nil},
-		"memusage":    {(*BufPane).MemUsageCmd, nil},
-		"retab":       {(*BufPane).RetabCmd, nil},
-		"raw":         {(*BufPane).RawCmd, nil},
-		"textfilter":  {(*BufPane).TextFilterCmd, nil},
+		"set":         command("set", "Preferences: Set Option", "Set a global option value", "set option value", "Preferences", (*BufPane).SetCmd, OptionValueComplete),
+		"setlocal":    command("setlocal", "Preferences: Set Local Option", "Set an option for the current buffer", "setlocal option value", "Preferences", (*BufPane).SetLocalCmd, OptionValueComplete),
+		"toggle":      command("toggle", "Preferences: Toggle Option", "Toggle a global boolean option", "toggle option", "Preferences", (*BufPane).ToggleCmd, OptionValueComplete),
+		"togglelocal": command("togglelocal", "Preferences: Toggle Local Option", "Toggle a local boolean option", "togglelocal option", "Preferences", (*BufPane).ToggleLocalCmd, OptionValueComplete),
+		"reset":       command("reset", "Preferences: Reset Option", "Reset an option to its default value", "reset option", "Preferences", (*BufPane).ResetCmd, OptionValueComplete),
+		"show":        command("show", "Preferences: Show Option", "Show the current value of an option", "show option", "Preferences", (*BufPane).ShowCmd, OptionComplete),
+		"showkey":     command("showkey", "Developer: Show Key", "Show the next key event received by the editor", "showkey", "Developer", (*BufPane).ShowKeyCmd, nil),
+		"run":         command("run", "Tasks: Run Shell Command", "Run a shell command in the background", "run command", "Terminal", (*BufPane).RunCmd, nil),
+		"bind":        command("bind", "Keyboard: Bind Key", "Create or update a keybinding", "bind key action", "Keyboard", (*BufPane).BindCmd, nil),
+		"unbind":      command("unbind", "Keyboard: Unbind Key", "Remove a keybinding", "unbind key", "Keyboard", (*BufPane).UnbindCmd, nil),
+		"quit":        command("quit", "File: Close Editor", "Close the current tab or split", "quit", "File", (*BufPane).QuitCmd, nil),
+		"goto":        command("goto", "Go to Line", "Move the cursor to a line number", "goto line", "Navigation", (*BufPane).GotoCmd, nil),
+		"jump":        command("jump", "Go to File Position", "Open a file and optional cursor position", "jump file:line:col", "Navigation", (*BufPane).JumpCmd, nil),
+		"save":        command("save", "File: Save", "Save the current file", "save [filename]", "File", (*BufPane).SaveCmd, nil),
+		"replace":     command("replace", "Edit: Replace", "Replace text in the current buffer", "replace search replacement", "Edit", (*BufPane).ReplaceCmd, nil),
+		"replaceall":  command("replaceall", "Edit: Replace All", "Replace all matches in the current buffer", "replaceall search replacement", "Edit", (*BufPane).ReplaceAllCmd, nil),
+		"vsplit":      command("vsplit", "View: Split Editor Right", "Open a file in a vertical split", "vsplit [file]", "View", (*BufPane).VSplitCmd, buffer.FileComplete),
+		"hsplit":      command("hsplit", "View: Split Editor Down", "Open a file in a horizontal split", "hsplit [file]", "View", (*BufPane).HSplitCmd, buffer.FileComplete),
+		"tab":         command("tab", "View: New Tab", "Open a file in a new tab", "tab [file]", "View", (*BufPane).NewTabCmd, buffer.FileComplete),
+		"help":        command("help", "Help: Open Help", "Open a help topic", "help [topic]", "Help", (*BufPane).HelpCmd, HelpComplete),
+		"eval":        command("eval", "Developer: Evaluate Lua", "Evaluate Lua code", "eval expression", "Developer", (*BufPane).EvalCmd, nil),
+		"log":         command("log", "Developer: Toggle Log", "Toggle the log buffer", "log", "Developer", (*BufPane).ToggleLogCmd, nil),
+		"plugin":      command("plugin", "Extensions: Manage Plugins", "Install, remove, update, or list plugins", "plugin action", "Extensions", (*BufPane).PluginCmd, PluginComplete),
+		"reload":      command("reload", "Developer: Reload Runtime", "Reload settings, syntax, colors, and plugins", "reload", "Developer", (*BufPane).ReloadCmd, nil),
+		"reopen":      command("reopen", "File: Reopen", "Reload the current file from disk", "reopen", "File", (*BufPane).ReopenCmd, nil),
+		"cd":          command("cd", "File: Change Directory", "Change the editor working directory", "cd directory", "File", (*BufPane).CdCmd, buffer.FileComplete),
+		"pwd":         command("pwd", "File: Print Working Directory", "Show the editor working directory", "pwd", "File", (*BufPane).PwdCmd, nil),
+		"open":        command("open", "File: Open File or Folder", "Open a file or folder in the current editor", "open path", "File", (*BufPane).OpenCmd, buffer.FileComplete),
+		"tabmove":     command("tabmove", "View: Move Tab", "Move the current tab", "tabmove index", "View", (*BufPane).TabMoveCmd, nil),
+		"tabswitch":   command("tabswitch", "View: Switch Tab", "Switch to a tab by index", "tabswitch index", "View", (*BufPane).TabSwitchCmd, nil),
+		"term":        command("term", "Terminal: Open In Tab", "Open a terminal tab", "term [command]", "Terminal", (*BufPane).TermCmd, nil),
+		"memusage":    command("memusage", "Developer: Show Memory Usage", "Show Go runtime memory usage", "memusage", "Developer", (*BufPane).MemUsageCmd, nil),
+		"retab":       command("retab", "Edit: Convert Indentation", "Convert indentation according to tab settings", "retab", "Edit", (*BufPane).RetabCmd, nil),
+		"raw":         command("raw", "Developer: Open Raw Event Viewer", "Display raw terminal events", "raw", "Developer", (*BufPane).RawCmd, nil),
+		"textfilter":  command("textfilter", "Edit: Filter Selection", "Filter selected text through a shell command", "textfilter command", "Edit", (*BufPane).TextFilterCmd, nil),
+		"command.palette":      command("command.palette", "Command Palette", "Show and run available commands", "command.palette", "General", (*BufPane).CommandPaletteCmd, nil),
+		"command.prompt":       command("command.prompt", "Command Bar: Open", "Open the raw command bar", "command.prompt", "General", (*BufPane).CommandPromptCmd, nil),
+		"explorer.toggle":      command("explorer.toggle", "Explorer: Toggle", "Show or hide the file explorer", "explorer.toggle", "Explorer", (*BufPane).ToggleExplorerCmd, nil),
+		"explorer.focus":       command("explorer.focus", "Explorer: Focus", "Focus the file explorer", "explorer.focus", "Explorer", (*BufPane).FocusExplorerCmd, nil),
+		"explorer.newFile":     command("explorer.newFile", "Explorer: New File", "Create a file in the selected folder", "explorer.newFile", "Explorer", (*BufPane).ExplorerNewFileCmd, nil),
+		"explorer.newFolder":   command("explorer.newFolder", "Explorer: New Folder", "Create a folder in the selected folder", "explorer.newFolder", "Explorer", (*BufPane).ExplorerNewFolderCmd, nil),
+		"explorer.rename":      command("explorer.rename", "Explorer: Rename", "Rename the selected file or folder", "explorer.rename", "Explorer", (*BufPane).ExplorerRenameCmd, nil),
+		"explorer.delete":      command("explorer.delete", "Explorer: Delete", "Delete the selected file or folder", "explorer.delete", "Explorer", (*BufPane).ExplorerDeleteCmd, nil),
+		"terminal.toggle":      command("terminal.toggle", "Terminal: Toggle Panel", "Show or hide the bottom terminal", "terminal.toggle", "Terminal", (*BufPane).ToggleTerminalCmd, nil),
+		"terminal.focus":       command("terminal.focus", "Terminal: Focus Panel", "Focus the bottom terminal", "terminal.focus", "Terminal", (*BufPane).FocusTerminalCmd, nil),
 	}
 }
 
@@ -74,7 +102,14 @@ func InitCommands() {
 // This can be called by plugins in Lua so that plugins can define their own commands
 func MakeCommand(name string, action func(bp *BufPane, args []string), completer buffer.Completer) {
 	if action != nil {
-		commands[name] = Command{action, completer}
+		commands[name] = command(name, name, "Plugin command", name, "Extensions", action, completer)
+	}
+}
+
+// MakeCommandWithInfo creates a command with command palette metadata.
+func MakeCommandWithInfo(name, title, description, usage, category string, action func(bp *BufPane, args []string), completer buffer.Completer) {
+	if action != nil {
+		commands[name] = command(name, title, description, usage, category, action, completer)
 	}
 }
 
@@ -303,8 +338,28 @@ func (h *BufPane) PwdCmd(args []string) {
 // OpenCmd opens a new buffer with a given filename
 func (h *BufPane) OpenCmd(args []string) {
 	if len(args) > 0 {
+		path := args[0]
+		info, err := os.Stat(path)
+		if err == nil && info.IsDir() {
+			absPath, err := filepath.Abs(path)
+			if err != nil {
+				InfoBar.Error(err)
+				return
+			}
+			if err := os.Chdir(absPath); err != nil {
+				InfoBar.Error(err)
+				return
+			}
+			if Panels != nil && Panels.Explorer != nil {
+				Panels.Explorer.Root = absPath
+				Panels.Explorer.Refresh()
+				Panels.FocusExplorer()
+			}
+			InfoBar.Message("Opened folder ", absPath)
+			return
+		}
 		open := func() {
-			b, err := buffer.NewBufferFromFile(args[0], buffer.BTDefault)
+			b, err := buffer.NewBufferFromFile(path, buffer.BTDefault)
 			if err != nil {
 				InfoBar.Error(err)
 				return

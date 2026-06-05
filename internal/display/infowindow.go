@@ -163,7 +163,7 @@ func (i *InfoWindow) displayBuffer() {
 	}
 }
 
-var keydisplay = []string{"^Q Quit, ^S Save, ^O Open, ^G Help, ^E Command Bar, ^K Cut Line", "^F Find, ^Z Undo, ^Y Redo, ^A Select All, ^D Duplicate Line, ^T New Tab"}
+var keydisplay = []string{"^Q Quit, ^S Save, ^O Open, ^E Commands, ^B Explorer, ^J Terminal", "^F Find, ^Z Undo, ^Y Redo, ^A Select All, ^D Duplicate Line, ^T New Tab"}
 
 func (i *InfoWindow) displayKeyMenu() {
 	// TODO: maybe make this based on the actual keybindings
@@ -209,6 +209,95 @@ func (i *InfoWindow) scrollToSuggestion() {
 	}
 }
 
+func trimDisplay(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	out := ""
+	w := 0
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if w+rw > width {
+			break
+		}
+		out += string(r)
+		w += rw
+	}
+	return out
+}
+
+func (i *InfoWindow) displayPalette() {
+	if !i.PaletteActive {
+		return
+	}
+
+	items := i.PaletteItems
+	maxRows := 10
+	if len(items) < maxRows {
+		maxRows = len(items)
+	}
+	if maxRows == 0 {
+		maxRows = 1
+	}
+	if maxRows > i.Y {
+		maxRows = i.Y
+	}
+
+	start := 0
+	if len(items) > maxRows && i.PaletteIndex >= maxRows {
+		start = i.PaletteIndex - maxRows + 1
+	}
+
+	baseStyle := config.DefStyle.Reverse(true)
+	if style, ok := config.Colorscheme["statusline"]; ok {
+		baseStyle = style
+	}
+	activeStyle := baseStyle.Reverse(true)
+	if style, ok := config.Colorscheme["statusline.suggestions"]; ok {
+		activeStyle = style.Reverse(true)
+	}
+
+	for row := 0; row < maxRows; row++ {
+		y := i.Y - maxRows + row
+		style := baseStyle
+		text := ""
+		idx := start + row
+		if idx < len(items) {
+			item := items[idx]
+			if idx == i.PaletteIndex {
+				style = activeStyle
+			}
+			text = item.Title
+			if item.Description != "" {
+				text += " - " + item.Description
+			}
+			if item.Binding != "" {
+				text += "  [" + item.Binding + "]"
+			}
+		} else {
+			text = "No matching commands"
+		}
+
+		text = trimDisplay(text, i.Width)
+		x := 0
+		for _, r := range text {
+			rw := runewidth.RuneWidth(r)
+			for j := 0; j < rw; j++ {
+				c := r
+				if j > 0 {
+					c = ' '
+				}
+				screen.SetContent(x, y, c, nil, style)
+				x++
+			}
+		}
+		for x < i.Width {
+			screen.SetContent(x, y, ' ', nil, style)
+			x++
+		}
+	}
+}
+
 func (i *InfoWindow) Display() {
 	if i.HasPrompt || config.GlobalSettings["infobar"].(bool) {
 		i.Clear()
@@ -236,6 +325,11 @@ func (i *InfoWindow) Display() {
 		if i.HasPrompt {
 			i.displayBuffer()
 		}
+	}
+
+	if i.PaletteActive {
+		i.displayPalette()
+		return
 	}
 
 	if i.HasSuggestions && len(i.Suggestions) > 1 {

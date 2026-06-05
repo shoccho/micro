@@ -446,7 +446,7 @@ Here are the available options:
 * `statusformatr`: format string definition for the right-justified part of the
    statusline.
 
-    default value: `$(bind:ToggleKeyMenu): bindings, $(bind:ToggleHelp): help`
+    default value: `$(bind:CommandPalette): commands, $(bind:ToggleExplorer): explorer`
 
 * `statusline`: display the status line at the bottom of the screen.
 
@@ -624,7 +624,7 @@ so that you can see what the formatting should look like.
     "splitright": true,
     "status": true,
     "statusformatl": "$(filename) $(modified)$(overwrite)($(line),$(col)) $(status.paste)| ft:$(opt:filetype) | $(opt:fileformat) | $(opt:encoding)",
-    "statusformatr": "$(bind:ToggleKeyMenu): bindings, $(bind:ToggleHelp): help",
+    "statusformatr": "$(bind:CommandPalette): commands, $(bind:ToggleExplorer): explorer",
     "statusline": true,
     "sucmd": "sudo",
     "syntax": true,

@@ -33,9 +33,23 @@ type InfoBuf struct {
 	// Is the current message a message from the gutter
 	HasGutter bool
 
+	// Palette state is used by the command palette prompt. It lives here so the
+	// display package can render it without importing the action package.
+	PaletteActive bool
+	PaletteItems  []PaletteItem
+	PaletteIndex  int
+
 	PromptCallback func(resp string, canceled bool)
 	EventCallback  func(resp string)
 	YNCallback     func(yes bool, canceled bool)
+}
+
+// PaletteItem describes a single row in the command palette.
+type PaletteItem struct {
+	ID          string
+	Title       string
+	Description string
+	Binding     string
 }
 
 // NewBuffer returns a new infobuffer
@@ -113,6 +127,11 @@ func (i *InfoBuf) Prompt(prompt string, msg string, ptype string, eventcb func(s
 	i.HasPrompt = true
 	i.HasMessage, i.HasError, i.HasYN = false, false, false
 	i.HasGutter = false
+	i.PaletteActive = ptype == "CommandPalette"
+	if !i.PaletteActive {
+		i.PaletteItems = nil
+		i.PaletteIndex = 0
+	}
 	i.PromptCallback = donecb
 	i.EventCallback = eventcb
 	i.Buffer.Insert(i.Buffer.Start(), msg)
@@ -168,6 +187,11 @@ func (i *InfoBuf) DonePrompt(canceled bool) {
 	if i.YNCallback != nil && hadYN {
 		i.YNCallback(i.YNResp, canceled)
 	}
+	if canceled || i.PromptType != "CommandPalette" {
+		i.PaletteActive = false
+		i.PaletteItems = nil
+		i.PaletteIndex = 0
+	}
 }
 
 // Reset resets the infobuffer's msg and info
@@ -175,4 +199,7 @@ func (i *InfoBuf) Reset() {
 	i.Msg = ""
 	i.HasPrompt, i.HasMessage, i.HasError = false, false, false
 	i.HasGutter = false
+	i.PaletteActive = false
+	i.PaletteItems = nil
+	i.PaletteIndex = 0
 }

@@ -1,0 +1,1102 @@
+diff --git a/cmd/micro/initlua.go b/cmd/micro/initlua.go
+index 2f7b2c62..e4aae656 100644
+--- a/cmd/micro/initlua.go
++++ b/cmd/micro/initlua.go
+@@ -68,6 +68,7 @@ func luaImportMicroConfig() *lua.LTable {
+ 	pkg := ulua.L.NewTable()
+ 
+ 	ulua.L.SetField(pkg, "MakeCommand", luar.New(ulua.L, action.MakeCommand))
++	ulua.L.SetField(pkg, "MakeCommandWithInfo", luar.New(ulua.L, action.MakeCommandWithInfo))
+ 	ulua.L.SetField(pkg, "FileComplete", luar.New(ulua.L, buffer.FileComplete))
+ 	ulua.L.SetField(pkg, "HelpComplete", luar.New(ulua.L, action.HelpComplete))
+ 	ulua.L.SetField(pkg, "OptionComplete", luar.New(ulua.L, action.OptionComplete))
+diff --git a/cmd/micro/micro.go b/cmd/micro/micro.go
+index c8a99b25..c0023ca2 100644
+--- a/cmd/micro/micro.go
++++ b/cmd/micro/micro.go
+@@ -214,6 +214,20 @@ func LoadInput(args []string) []*buffer.Buffer {
+ 		// Option 1
+ 		// We go through each file and load it
+ 		for i := 0; i < len(files); i++ {
++			fileInfo, err := os.Stat(files[i])
++			if err == nil && fileInfo.IsDir() {
++				absPath, err := filepath.Abs(files[i])
++				if err == nil {
++					os.Chdir(absPath)
++					action.Panels.Explorer.Root = absPath
++					action.Panels.Explorer.Refresh()
++					action.Panels.Explorer.Visible = true
++				}
++				if len(buffers) == 0 {
++					buffers = append(buffers, buffer.NewBufferFromStringWithCommand("", "", buffer.BTDefault, command))
++				}
++				continue
++			}
+ 			buf, err := buffer.NewBufferFromFileWithCommand(files[i], buffer.BTDefault, command)
+ 			if err != nil {
+ 				screen.TermMessage(err)
+@@ -495,6 +509,7 @@ func DoEvent() {
+ 		ep.Display()
+ 	}
+ 	action.MainTab().Display()
++	action.Panels.Display()
+ 	action.InfoBar.Display()
+ 	screen.Screen.Show()
+ 
+@@ -509,6 +524,7 @@ func DoEvent() {
+ 		}
+ 	case <-shell.CloseTerms:
+ 		action.Tabs.CloseTerms()
++		action.Panels.CloseTerms()
+ 	case event = <-screen.Events:
+ 	case <-screen.DrawChan():
+ 		for len(screen.DrawChan()) > 0 {
+@@ -536,9 +552,12 @@ func DoEvent() {
+ 		_, resize := event.(*tcell.EventResize)
+ 		if resize {
+ 			action.InfoBar.HandleEvent(event)
++			action.Panels.HandleEvent(event)
+ 			action.Tabs.HandleEvent(event)
+ 		} else if action.InfoBar.HasPrompt {
+ 			action.InfoBar.HandleEvent(event)
++		} else if action.Panels.HandleEvent(event) {
++			// handled by a global panel
+ 		} else {
+ 			action.Tabs.HandleEvent(event)
+ 		}
+diff --git a/internal/action/actions.go b/internal/action/actions.go
+index 491199f7..ce25d26b 100644
+--- a/internal/action/actions.go
++++ b/internal/action/actions.go
+@@ -1665,11 +1665,28 @@ func (h *BufPane) SelectAll() bool {
+ 
+ // OpenFile opens a new file in the buffer
+ func (h *BufPane) OpenFile() bool {
+-	InfoBar.Prompt("> ", "open ", "Open", nil, func(resp string, canceled bool) {
+-		if !canceled {
+-			h.HandleCommand(resp)
+-		}
+-	})
++	if Panels != nil {
++		Panels.FocusExplorer()
++	}
++	return true
++}
++
++func (h *BufPane) RunCommand() bool {
++	cfg := config.LoadWorkspaceConfig()
++	if cfg == nil || cfg.F5 == "" {
++		InfoBar.Error("No F5 command configured for this workspace. Add one in .microrc.ini")
++		return false
++	}
++	runf, err := shell.RunBackgroundShell(cfg.F5)
++	if err != nil {
++		InfoBar.Error(err)
++		return false
++	}
++	go func() {
++		InfoBar.Message(runf())
++		screen.Redraw()
++	}()
++	InfoBar.Message("Running: ", cfg.F5)
+ 	return true
+ }
+ 
+diff --git a/internal/action/bufpane.go b/internal/action/bufpane.go
+index df6a20f8..cacb950b 100644
+--- a/internal/action/bufpane.go
++++ b/internal/action/bufpane.go
+@@ -254,6 +254,12 @@ type BufPane struct {
+ 	// since we may not know the window geometry yet. In such case we finish
+ 	// its initialization a bit later, after the initial resize.
+ 	initialized bool
++
++	PickerRoot    string
++	PickerEntries []pickerEntry
++	PickerIdx     int
++	IsPicker      bool
++	OrigPane      *BufPane
+ }
+ 
+ func newBufPane(buf *buffer.Buffer, win display.BWindow, tab *Tab) *BufPane {
+@@ -426,6 +432,10 @@ func (h *BufPane) getReloadSetting() string {
+ 
+ // HandleEvent executes the tcell event properly
+ func (h *BufPane) HandleEvent(event tcell.Event) {
++	if h.IsPicker {
++		h.PickerHandleEvent(event)
++		return
++	}
+ 	if h.Buf.ExternallyModified() && !h.Buf.ReloadDisabled {
+ 		reload := h.getReloadSetting()
+ 
+@@ -794,6 +804,7 @@ var BufKeyActions = map[string]BufKeyAction{
+ 	"PastePrimary":              (*BufPane).PastePrimary,
+ 	"SelectAll":                 (*BufPane).SelectAll,
+ 	"OpenFile":                  (*BufPane).OpenFile,
++	"OpenFilePicker":            (*BufPane).OpenFilePicker,
+ 	"Start":                     (*BufPane).Start,
+ 	"End":                       (*BufPane).End,
+ 	"PageUp":                    (*BufPane).PageUp,
+@@ -816,6 +827,15 @@ var BufKeyActions = map[string]BufKeyAction{
+ 	"ClearStatus":               (*BufPane).ClearStatus,
+ 	"ShellMode":                 (*BufPane).ShellMode,
+ 	"CommandMode":               (*BufPane).CommandMode,
++	"CommandPalette":            (*BufPane).CommandPalette,
++	"ToggleExplorer":            (*BufPane).ToggleExplorer,
++	"FocusExplorer":             (*BufPane).FocusExplorer,
++	"ToggleTerminal":            (*BufPane).ToggleTerminal,
++	"FocusTerminal":             (*BufPane).FocusTerminal,
++	"ExplorerNewFile":           (*BufPane).ExplorerNewFile,
++	"ExplorerNewFolder":         (*BufPane).ExplorerNewFolder,
++	"ExplorerRename":            (*BufPane).ExplorerRename,
++	"ExplorerDelete":            (*BufPane).ExplorerDelete,
+ 	"ToggleOverwriteMode":       (*BufPane).ToggleOverwriteMode,
+ 	"Escape":                    (*BufPane).Escape,
+ 	"Quit":                      (*BufPane).Quit,
+@@ -850,6 +870,7 @@ var BufKeyActions = map[string]BufKeyAction{
+ 	"JumpLine":                  (*BufPane).JumpLine,
+ 	"Deselect":                  (*BufPane).Deselect,
+ 	"ClearInfo":                 (*BufPane).ClearInfo,
++	"RunCommand":                (*BufPane).RunCommand,
+ 	"None":                      (*BufPane).None,
+ 
+ 	// This was changed to InsertNewline but I don't want to break backwards compatibility
+diff --git a/internal/action/command.go b/internal/action/command.go
+index d676cfad..d64d951e 100644
+--- a/internal/action/command.go
++++ b/internal/action/command.go
+@@ -24,49 +24,77 @@ import (
+ // A Command contains information about how to execute a command
+ // It has the action for that command as well as a completer function
+ type Command struct {
++	name        string
++	title       string
++	description string
++	usage       string
++	category    string
+ 	action    func(*BufPane, []string)
+ 	completer buffer.Completer
+ }
+ 
+ var commands map[string]Command
+ 
++func command(name, title, description, usage, category string, action func(*BufPane, []string), completer buffer.Completer) Command {
++	if title == "" {
++		title = name
++	}
++	if usage == "" {
++		usage = name
++	}
++	if category == "" {
++		category = "General"
++	}
++	return Command{name: name, title: title, description: description, usage: usage, category: category, action: action, completer: completer}
++}
++
+ func InitCommands() {
+ 	commands = map[string]Command{
+-		"set":         {(*BufPane).SetCmd, OptionValueComplete},
+-		"setlocal":    {(*BufPane).SetLocalCmd, OptionValueComplete},
+-		"toggle":      {(*BufPane).ToggleCmd, OptionValueComplete},
+-		"togglelocal": {(*BufPane).ToggleLocalCmd, OptionValueComplete},
+-		"reset":       {(*BufPane).ResetCmd, OptionValueComplete},
+-		"show":        {(*BufPane).ShowCmd, OptionComplete},
+-		"showkey":     {(*BufPane).ShowKeyCmd, nil},
+-		"run":         {(*BufPane).RunCmd, nil},
+-		"bind":        {(*BufPane).BindCmd, nil},
+-		"unbind":      {(*BufPane).UnbindCmd, nil},
+-		"quit":        {(*BufPane).QuitCmd, nil},
+-		"goto":        {(*BufPane).GotoCmd, nil},
+-		"jump":        {(*BufPane).JumpCmd, nil},
+-		"save":        {(*BufPane).SaveCmd, nil},
+-		"replace":     {(*BufPane).ReplaceCmd, nil},
+-		"replaceall":  {(*BufPane).ReplaceAllCmd, nil},
+-		"vsplit":      {(*BufPane).VSplitCmd, buffer.FileComplete},
+-		"hsplit":      {(*BufPane).HSplitCmd, buffer.FileComplete},
+-		"tab":         {(*BufPane).NewTabCmd, buffer.FileComplete},
+-		"help":        {(*BufPane).HelpCmd, HelpComplete},
+-		"eval":        {(*BufPane).EvalCmd, nil},
+-		"log":         {(*BufPane).ToggleLogCmd, nil},
+-		"plugin":      {(*BufPane).PluginCmd, PluginComplete},
+-		"reload":      {(*BufPane).ReloadCmd, nil},
+-		"reopen":      {(*BufPane).ReopenCmd, nil},
+-		"cd":          {(*BufPane).CdCmd, buffer.FileComplete},
+-		"pwd":         {(*BufPane).PwdCmd, nil},
+-		"open":        {(*BufPane).OpenCmd, buffer.FileComplete},
+-		"tabmove":     {(*BufPane).TabMoveCmd, nil},
+-		"tabswitch":   {(*BufPane).TabSwitchCmd, nil},
+-		"term":        {(*BufPane).TermCmd, nil},
+-		"memusage":    {(*BufPane).MemUsageCmd, nil},
+-		"retab":       {(*BufPane).RetabCmd, nil},
+-		"raw":         {(*BufPane).RawCmd, nil},
+-		"textfilter":  {(*BufPane).TextFilterCmd, nil},
++		"set":         command("set", "Preferences: Set Option", "Set a global option value", "set option value", "Preferences", (*BufPane).SetCmd, OptionValueComplete),
++		"setlocal":    command("setlocal", "Preferences: Set Local Option", "Set an option for the current buffer", "setlocal option value", "Preferences", (*BufPane).SetLocalCmd, OptionValueComplete),
++		"toggle":      command("toggle", "Preferences: Toggle Option", "Toggle a global boolean option", "toggle option", "Preferences", (*BufPane).ToggleCmd, OptionValueComplete),
++		"togglelocal": command("togglelocal", "Preferences: Toggle Local Option", "Toggle a local boolean option", "togglelocal option", "Preferences", (*BufPane).ToggleLocalCmd, OptionValueComplete),
++		"reset":       command("reset", "Preferences: Reset Option", "Reset an option to its default value", "reset option", "Preferences", (*BufPane).ResetCmd, OptionValueComplete),
++		"show":        command("show", "Preferences: Show Option", "Show the current value of an option", "show option", "Preferences", (*BufPane).ShowCmd, OptionComplete),
++		"showkey":     command("showkey", "Developer: Show Key", "Show the next key event received by the editor", "showkey", "Developer", (*BufPane).ShowKeyCmd, nil),
++		"run":         command("run", "Tasks: Run Shell Command", "Run a shell command in the background", "run command", "Terminal", (*BufPane).RunCmd, nil),
++		"bind":        command("bind", "Keyboard: Bind Key", "Create or update a keybinding", "bind key action", "Keyboard", (*BufPane).BindCmd, nil),
++		"unbind":      command("unbind", "Keyboard: Unbind Key", "Remove a keybinding", "unbind key", "Keyboard", (*BufPane).UnbindCmd, nil),
++		"quit":        command("quit", "File: Close Editor", "Close the current tab or split", "quit", "File", (*BufPane).QuitCmd, nil),
++		"goto":        command("goto", "Go to Line", "Move the cursor to a line number", "goto line", "Navigation", (*BufPane).GotoCmd, nil),
++		"jump":        command("jump", "Go to File Position", "Open a file and optional cursor position", "jump file:line:col", "Navigation", (*BufPane).JumpCmd, nil),
++		"save":        command("save", "File: Save", "Save the current file", "save [filename]", "File", (*BufPane).SaveCmd, nil),
++		"replace":     command("replace", "Edit: Replace", "Replace text in the current buffer", "replace search replacement", "Edit", (*BufPane).ReplaceCmd, nil),
++		"replaceall":  command("replaceall", "Edit: Replace All", "Replace all matches in the current buffer", "replaceall search replacement", "Edit", (*BufPane).ReplaceAllCmd, nil),
++		"vsplit":      command("vsplit", "View: Split Editor Right", "Open a file in a vertical split", "vsplit [file]", "View", (*BufPane).VSplitCmd, buffer.FileComplete),
++		"hsplit":      command("hsplit", "View: Split Editor Down", "Open a file in a horizontal split", "hsplit [file]", "View", (*BufPane).HSplitCmd, buffer.FileComplete),
++		"tab":         command("tab", "View: New Tab", "Open a file in a new tab", "tab [file]", "View", (*BufPane).NewTabCmd, buffer.FileComplete),
++		"help":        command("help", "Help: Open Help", "Open a help topic", "help [topic]", "Help", (*BufPane).HelpCmd, HelpComplete),
++		"eval":        command("eval", "Developer: Evaluate Lua", "Evaluate Lua code", "eval expression", "Developer", (*BufPane).EvalCmd, nil),
++		"log":         command("log", "Developer: Toggle Log", "Toggle the log buffer", "log", "Developer", (*BufPane).ToggleLogCmd, nil),
++		"plugin":      command("plugin", "Extensions: Manage Plugins", "Install, remove, update, or list plugins", "plugin action", "Extensions", (*BufPane).PluginCmd, PluginComplete),
++		"reload":      command("reload", "Developer: Reload Runtime", "Reload settings, syntax, colors, and plugins", "reload", "Developer", (*BufPane).ReloadCmd, nil),
++		"reopen":      command("reopen", "File: Reopen", "Reload the current file from disk", "reopen", "File", (*BufPane).ReopenCmd, nil),
++		"cd":          command("cd", "File: Change Directory", "Change the editor working directory", "cd directory", "File", (*BufPane).CdCmd, buffer.FileComplete),
++		"pwd":         command("pwd", "File: Print Working Directory", "Show the editor working directory", "pwd", "File", (*BufPane).PwdCmd, nil),
++		"open":        command("open", "File: Open File or Folder", "Open a file or folder in the current editor", "open path", "File", (*BufPane).OpenCmd, buffer.FileComplete),
++		"tabmove":     command("tabmove", "View: Move Tab", "Move the current tab", "tabmove index", "View", (*BufPane).TabMoveCmd, nil),
++		"tabswitch":   command("tabswitch", "View: Switch Tab", "Switch to a tab by index", "tabswitch index", "View", (*BufPane).TabSwitchCmd, nil),
++		"term":        command("term", "Terminal: Open In Tab", "Open a terminal tab", "term [command]", "Terminal", (*BufPane).TermCmd, nil),
++		"memusage":    command("memusage", "Developer: Show Memory Usage", "Show Go runtime memory usage", "memusage", "Developer", (*BufPane).MemUsageCmd, nil),
++		"retab":       command("retab", "Edit: Convert Indentation", "Convert indentation according to tab settings", "retab", "Edit", (*BufPane).RetabCmd, nil),
++		"raw":         command("raw", "Developer: Open Raw Event Viewer", "Display raw terminal events", "raw", "Developer", (*BufPane).RawCmd, nil),
++		"textfilter":  command("textfilter", "Edit: Filter Selection", "Filter selected text through a shell command", "textfilter command", "Edit", (*BufPane).TextFilterCmd, nil),
++		"command.palette":      command("command.palette", "Command Palette", "Show and run available commands", "command.palette", "General", (*BufPane).CommandPaletteCmd, nil),
++		"command.prompt":       command("command.prompt", "Command Bar: Open", "Open the raw command bar", "command.prompt", "General", (*BufPane).CommandPromptCmd, nil),
++		"explorer.toggle":      command("explorer.toggle", "Explorer: Toggle", "Show or hide the file explorer", "explorer.toggle", "Explorer", (*BufPane).ToggleExplorerCmd, nil),
++		"explorer.focus":       command("explorer.focus", "Explorer: Focus", "Focus the file explorer", "explorer.focus", "Explorer", (*BufPane).FocusExplorerCmd, nil),
++		"explorer.newFile":     command("explorer.newFile", "Explorer: New File", "Create a file in the selected folder", "explorer.newFile", "Explorer", (*BufPane).ExplorerNewFileCmd, nil),
++		"explorer.newFolder":   command("explorer.newFolder", "Explorer: New Folder", "Create a folder in the selected folder", "explorer.newFolder", "Explorer", (*BufPane).ExplorerNewFolderCmd, nil),
++		"explorer.rename":      command("explorer.rename", "Explorer: Rename", "Rename the selected file or folder", "explorer.rename", "Explorer", (*BufPane).ExplorerRenameCmd, nil),
++		"explorer.delete":      command("explorer.delete", "Explorer: Delete", "Delete the selected file or folder", "explorer.delete", "Explorer", (*BufPane).ExplorerDeleteCmd, nil),
++		"terminal.toggle":      command("terminal.toggle", "Terminal: Toggle Panel", "Show or hide the bottom terminal", "terminal.toggle", "Terminal", (*BufPane).ToggleTerminalCmd, nil),
++		"terminal.focus":       command("terminal.focus", "Terminal: Focus Panel", "Focus the bottom terminal", "terminal.focus", "Terminal", (*BufPane).FocusTerminalCmd, nil),
+ 	}
+ }
+ 
+@@ -74,7 +102,14 @@ func InitCommands() {
+ // This can be called by plugins in Lua so that plugins can define their own commands
+ func MakeCommand(name string, action func(bp *BufPane, args []string), completer buffer.Completer) {
+ 	if action != nil {
+-		commands[name] = Command{action, completer}
++		commands[name] = command(name, name, "Plugin command", name, "Extensions", action, completer)
++	}
++}
++
++// MakeCommandWithInfo creates a command with command palette metadata.
++func MakeCommandWithInfo(name, title, description, usage, category string, action func(bp *BufPane, args []string), completer buffer.Completer) {
++	if action != nil {
++		commands[name] = command(name, title, description, usage, category, action, completer)
+ 	}
+ }
+ 
+@@ -303,8 +338,28 @@ func (h *BufPane) PwdCmd(args []string) {
+ // OpenCmd opens a new buffer with a given filename
+ func (h *BufPane) OpenCmd(args []string) {
+ 	if len(args) > 0 {
++		path := args[0]
++		info, err := os.Stat(path)
++		if err == nil && info.IsDir() {
++			absPath, err := filepath.Abs(path)
++			if err != nil {
++				InfoBar.Error(err)
++				return
++			}
++			if err := os.Chdir(absPath); err != nil {
++				InfoBar.Error(err)
++				return
++			}
++			if Panels != nil && Panels.Explorer != nil {
++				Panels.Explorer.Root = absPath
++				Panels.Explorer.Refresh()
++				Panels.FocusExplorer()
++			}
++			InfoBar.Message("Opened folder ", absPath)
++			return
++		}
+ 		open := func() {
+-			b, err := buffer.NewBufferFromFile(args[0], buffer.BTDefault)
++			b, err := buffer.NewBufferFromFile(path, buffer.BTDefault)
+ 			if err != nil {
+ 				InfoBar.Error(err)
+ 				return
+diff --git a/internal/action/defaults_darwin.go b/internal/action/defaults_darwin.go
+index 44b4fcc1..054f5d9f 100644
+--- a/internal/action/defaults_darwin.go
++++ b/internal/action/defaults_darwin.go
+@@ -35,12 +35,14 @@ var bufdefaults = map[string]string{
+ 	"Alt-Backspace":  "DeleteWordLeft",
+ 	"Tab":            "Autocomplete|IndentSelection|InsertTab",
+ 	"Backtab":        "CycleAutocompleteBack|OutdentSelection|OutdentLine",
+-	"Ctrl-o":         "OpenFile",
++	"Ctrl-o":         "OpenFilePicker",
+ 	"Ctrl-s":         "Save",
+ 	"Ctrl-f":         "Find",
+ 	"Alt-F":          "FindLiteral",
+-	"Ctrl-n":         "FindNext",
+-	"Ctrl-p":         "FindPrevious",
++	"Ctrl-n":         "AddTab",
++	"Ctrl-p":         "command-edit:open ",
++	"CtrlShiftP":     "CommandPalette",
++	"F1":             "CommandPalette",
+ 	"Alt-[":          "DiffPrevious|CursorStart",
+ 	"Alt-]":          "DiffNext|CursorEnd",
+ 	"Ctrl-z":         "Undo",
+@@ -48,7 +50,7 @@ var bufdefaults = map[string]string{
+ 	"Ctrl-c":         "Copy|CopyLine",
+ 	"Ctrl-x":         "Cut|CutLine",
+ 	"Ctrl-k":         "CutLine",
+-	"Ctrl-d":         "Duplicate|DuplicateLine",
++	"Ctrl-d":         "SpawnMultiCursor",
+ 	"Ctrl-v":         "Paste",
+ 	"Ctrl-a":         "SelectAll",
+ 	"Ctrl-t":         "AddTab",
+@@ -64,17 +66,19 @@ var bufdefaults = map[string]string{
+ 	"CtrlPageDown":   "NextTab|FirstTab",
+ 	"ShiftPageUp":    "SelectPageUp",
+ 	"ShiftPageDown":  "SelectPageDown",
+-	"Ctrl-g":         "ToggleHelp",
++	"Ctrl-g":         "command-edit:goto ",
+ 	"Alt-g":          "ToggleKeyMenu",
+ 	"Ctrl-r":         "ToggleRuler",
+ 	"Ctrl-l":         "command-edit:goto ",
+ 	"Delete":         "Delete",
+-	"Ctrl-b":         "ShellMode",
++	"Ctrl-b":         "ToggleExplorer",
+ 	"Ctrl-q":         "Quit",
+-	"Ctrl-e":         "CommandMode",
+-	"Ctrl-w":         "NextSplit|FirstSplit",
++	"Ctrl-e":         "CommandPalette",
++	"Ctrl-w":         "Quit",
+ 	"Ctrl-u":         "ToggleMacro",
+-	"Ctrl-j":         "PlayMacro",
++	"Ctrl-j":         "ToggleTerminal",
++	"Ctrl-`":         "ToggleTerminal",
++	"CtrlShiftS":     "SaveAs",
+ 	"Insert":         "ToggleOverwriteMode",
+ 
+ 	// Emacs-style keybindings
+@@ -89,6 +93,7 @@ var bufdefaults = map[string]string{
+ 	"F2":  "Save",
+ 	"F3":  "Find",
+ 	"F4":  "Quit",
++	"F5":  "RunCommand",
+ 	"F7":  "Find",
+ 	"F10": "Quit",
+ 	"Esc": "Escape,Deselect,ClearInfo,RemoveAllMultiCursors,UnhighlightSearch",
+diff --git a/internal/action/defaults_other.go b/internal/action/defaults_other.go
+index 10e5b083..aa872351 100644
+--- a/internal/action/defaults_other.go
++++ b/internal/action/defaults_other.go
+@@ -38,12 +38,14 @@ var bufdefaults = map[string]string{
+ 	"Alt-Backspace":  "DeleteWordLeft",
+ 	"Tab":            "Autocomplete|IndentSelection|InsertTab",
+ 	"Backtab":        "CycleAutocompleteBack|OutdentSelection|OutdentLine",
+-	"Ctrl-o":         "OpenFile",
++	"Ctrl-o":         "OpenFilePicker",
+ 	"Ctrl-s":         "Save",
+ 	"Ctrl-f":         "Find",
+ 	"Alt-F":          "FindLiteral",
+-	"Ctrl-n":         "FindNext",
+-	"Ctrl-p":         "FindPrevious",
++	"Ctrl-n":         "AddTab",
++	"Ctrl-p":         "command-edit:open ",
++	"CtrlShiftP":     "CommandPalette",
++	"F1":             "CommandPalette",
+ 	"Alt-[":          "DiffPrevious|CursorStart",
+ 	"Alt-]":          "DiffNext|CursorEnd",
+ 	"Ctrl-z":         "Undo",
+@@ -51,7 +53,7 @@ var bufdefaults = map[string]string{
+ 	"Ctrl-c":         "Copy|CopyLine",
+ 	"Ctrl-x":         "Cut|CutLine",
+ 	"Ctrl-k":         "CutLine",
+-	"Ctrl-d":         "Duplicate|DuplicateLine",
++	"Ctrl-d":         "SpawnMultiCursor",
+ 	"Ctrl-v":         "Paste",
+ 	"Ctrl-a":         "SelectAll",
+ 	"Ctrl-t":         "AddTab",
+@@ -67,17 +69,19 @@ var bufdefaults = map[string]string{
+ 	"CtrlPageDown":   "NextTab|FirstTab",
+ 	"ShiftPageUp":    "SelectPageUp",
+ 	"ShiftPageDown":  "SelectPageDown",
+-	"Ctrl-g":         "ToggleHelp",
++	"Ctrl-g":         "command-edit:goto ",
+ 	"Alt-g":          "ToggleKeyMenu",
+ 	"Ctrl-r":         "ToggleRuler",
+ 	"Ctrl-l":         "command-edit:goto ",
+ 	"Delete":         "Delete",
+-	"Ctrl-b":         "ShellMode",
++	"Ctrl-b":         "ToggleExplorer",
+ 	"Ctrl-q":         "Quit",
+-	"Ctrl-e":         "CommandMode",
+-	"Ctrl-w":         "NextSplit|FirstSplit",
++	"Ctrl-e":         "CommandPalette",
++	"Ctrl-w":         "Quit",
+ 	"Ctrl-u":         "ToggleMacro",
+-	"Ctrl-j":         "PlayMacro",
++	"Ctrl-j":         "ToggleTerminal",
++	"Ctrl-`":         "ToggleTerminal",
++	"CtrlShiftS":     "SaveAs",
+ 	"Insert":         "ToggleOverwriteMode",
+ 
+ 	// Emacs-style keybindings
+@@ -92,6 +96,7 @@ var bufdefaults = map[string]string{
+ 	"F2":  "Save",
+ 	"F3":  "Find",
+ 	"F4":  "Quit",
++	"F5":  "RunCommand",
+ 	"F7":  "Find",
+ 	"F10": "Quit",
+ 	"Esc": "Escape,Deselect,ClearInfo,RemoveAllMultiCursors,UnhighlightSearch",
+diff --git a/internal/action/globals.go b/internal/action/globals.go
+index f5052b1c..7da5f904 100644
+--- a/internal/action/globals.go
++++ b/internal/action/globals.go
+@@ -11,6 +11,10 @@ var LogBufPane *BufPane
+ // InitGlobals initializes the log buffer and the info bar
+ func InitGlobals() {
+ 	InfoBar = NewInfoBar()
++	Panels = NewPanelManager()
++	if Tabs != nil {
++		Tabs.Resize()
++	}
+ 	buffer.LogBuf = buffer.NewBufferFromString("", "", buffer.BTLog)
+ 	buffer.LogBuf.SetName("Log")
+ }
+diff --git a/internal/action/infopane.go b/internal/action/infopane.go
+index 6ecd9552..6c9c25c0 100644
+--- a/internal/action/infopane.go
++++ b/internal/action/infopane.go
+@@ -168,11 +168,23 @@ func (h *InfoPane) DoKeyEvent(e KeyEvent) bool {
+ 
+ // HistoryUp cycles history up
+ func (h *InfoPane) HistoryUp() {
++	if h.PromptType == "CommandPalette" && h.PaletteActive {
++		if h.PaletteIndex > 0 {
++			h.PaletteIndex--
++		}
++		return
++	}
+ 	h.UpHistory(h.History[h.PromptType])
+ }
+ 
+ // HistoryDown cycles history down
+ func (h *InfoPane) HistoryDown() {
++	if h.PromptType == "CommandPalette" && h.PaletteActive {
++		if h.PaletteIndex < len(h.PaletteItems)-1 {
++			h.PaletteIndex++
++		}
++		return
++	}
+ 	h.DownHistory(h.History[h.PromptType])
+ }
+ 
+@@ -190,6 +202,11 @@ func (h *InfoPane) HistorySearchDown() {
+ 
+ // Autocomplete begins autocompletion
+ func (h *InfoPane) CommandComplete() {
++	if h.PromptType == "CommandPalette" && h.PaletteActive {
++		h.ExecuteCommand()
++		return
++	}
++
+ 	b := h.Buf
+ 	if b.HasSuggestions {
+ 		b.CycleAutocomplete(true)
+@@ -226,6 +243,9 @@ func (h *InfoPane) ExecuteCommand() {
+ 
+ // AbortCommand cancels the prompt
+ func (h *InfoPane) AbortCommand() {
++	h.PaletteActive = false
++	h.PaletteItems = nil
++	h.PaletteIndex = 0
+ 	h.DonePrompt(true)
+ }
+ 
+diff --git a/internal/action/tab.go b/internal/action/tab.go
+index fa991f3e..a1878475 100644
+--- a/internal/action/tab.go
++++ b/internal/action/tab.go
+@@ -8,6 +8,7 @@ import (
+ 	"github.com/micro-editor/micro/v2/internal/display"
+ 	ulua "github.com/micro-editor/micro/v2/internal/lua"
+ 	"github.com/micro-editor/micro/v2/internal/screen"
++	"github.com/micro-editor/micro/v2/internal/util"
+ 	"github.com/micro-editor/micro/v2/internal/views"
+ 	"github.com/micro-editor/tcell/v2"
+ )
+@@ -22,18 +23,18 @@ type TabList struct {
+ // NewTabList creates a TabList from a list of buffers by creating a Tab
+ // for each buffer
+ func NewTabList(bufs []*buffer.Buffer) *TabList {
+-	w, h := screen.Screen.Size()
+-	iOffset := config.GetInfoBarOffset()
++	rect := EditorRect()
+ 	tl := new(TabList)
+ 	tl.List = make([]*Tab, len(bufs))
+ 	if len(bufs) > 1 {
+ 		for i, b := range bufs {
+-			tl.List[i] = NewTabFromBuffer(0, 1, w, h-1-iOffset, b)
++			tl.List[i] = NewTabFromBuffer(rect.X, rect.Y+1, rect.W, util.Max(1, rect.H-1), b)
+ 		}
+ 	} else {
+-		tl.List[0] = NewTabFromBuffer(0, 0, w, h-iOffset, bufs[0])
++		tl.List[0] = NewTabFromBuffer(rect.X, rect.Y, rect.W, rect.H, bufs[0])
+ 	}
+-	tl.TabWindow = display.NewTabWindow(w, 0)
++	tl.TabWindow = display.NewTabWindow(rect.W, rect.Y)
++	tl.TabWindow.X = rect.X
+ 	tl.Names = make([]string, len(bufs))
+ 
+ 	return tl
+@@ -81,20 +82,25 @@ func (t *TabList) RemoveTab(id uint64) {
+ // that into account
+ func (t *TabList) Resize() {
+ 	w, h := screen.Screen.Size()
++	rect := EditorRect()
+ 	iOffset := config.GetInfoBarOffset()
+ 	InfoBar.Resize(w, h-1)
+ 	if len(t.List) > 1 {
+ 		for _, p := range t.List {
+-			p.Y = 1
+-			p.Node.Resize(w, h-1-iOffset)
++			p.X = rect.X
++			p.Y = rect.Y + 1
++			p.Node.Resize(rect.W, util.Max(1, rect.H-1))
+ 			p.Resize()
+ 		}
+ 	} else if len(t.List) == 1 {
+-		t.List[0].Y = 0
+-		t.List[0].Node.Resize(w, h-iOffset)
++		t.List[0].X = rect.X
++		t.List[0].Y = rect.Y
++		t.List[0].Node.Resize(rect.W, rect.H)
+ 		t.List[0].Resize()
+ 	}
+-	t.TabWindow.Resize(w, h)
++	t.TabWindow.X = rect.X
++	t.TabWindow.Y = rect.Y
++	t.TabWindow.Resize(rect.W, h-iOffset)
+ }
+ 
+ // HandleEvent checks for a resize event or a mouse event on the tab bar
+@@ -107,10 +113,10 @@ func (t *TabList) HandleEvent(event tcell.Event) {
+ 		mx, my := e.Position()
+ 		switch e.Buttons() {
+ 		case tcell.Button1:
+-			if my == t.Y && len(t.List) > 1 {
+-				if mx == 0 {
++			if my == t.Y && len(t.List) > 1 && mx >= t.X && mx < t.X+t.Width {
++				if mx == t.X {
+ 					t.Scroll(-4)
+-				} else if mx == t.Width-1 {
++				} else if mx == t.X+t.Width-1 {
+ 					t.Scroll(4)
+ 				} else {
+ 					ind := t.LocFromVisual(buffer.Loc{mx, my})
+@@ -127,12 +133,12 @@ func (t *TabList) HandleEvent(event tcell.Event) {
+ 				return
+ 			}
+ 		case tcell.WheelUp:
+-			if my == t.Y && len(t.List) > 1 {
++			if my == t.Y && len(t.List) > 1 && mx >= t.X && mx < t.X+t.Width {
+ 				t.Scroll(4)
+ 				return
+ 			}
+ 		case tcell.WheelDown:
+-			if my == t.Y && len(t.List) > 1 {
++			if my == t.Y && len(t.List) > 1 && mx >= t.X && mx < t.X+t.Width {
+ 				t.Scroll(-4)
+ 				return
+ 			}
+@@ -382,7 +388,7 @@ func (t *Tab) Resize() {
+ 		n := t.GetNode(p.ID())
+ 		pv := p.GetView()
+ 		offset := 0
+-		if n.X != 0 {
++		if n.X != t.Node.X {
+ 			offset = 1
+ 		}
+ 		pv.X, pv.Y = n.X+offset, n.Y
+diff --git a/internal/config/settings.go b/internal/config/settings.go
+index 26f1cc8d..58ffdbbb 100644
+--- a/internal/config/settings.go
++++ b/internal/config/settings.go
+@@ -26,6 +26,7 @@ var optionValidators = map[string]optionValidator{
+ 	"colorcolumn":     validateNonNegativeValue,
+ 	"colorscheme":     validateColorscheme,
+ 	"detectlimit":     validateNonNegativeValue,
++	"explorerwidth":   validatePositiveValue,
+ 	"encoding":        validateEncoding,
+ 	"fileformat":      validateChoice,
+ 	"helpsplit":       validateChoice,
+@@ -36,6 +37,7 @@ var optionValidators = map[string]optionValidator{
+ 	"scrollmargin":    validateNonNegativeValue,
+ 	"scrollspeed":     validateNonNegativeValue,
+ 	"tabsize":         validatePositiveValue,
++	"terminalheight":  validatePositiveValue,
+ 	"truecolor":       validateChoice,
+ }
+ 
+@@ -96,7 +98,7 @@ var defaultCommonSettings = map[string]any{
+ 	"splitbottom":     true,
+ 	"splitright":      true,
+ 	"statusformatl":   "$(filename) $(modified)$(overwrite)($(line),$(col)) $(status.paste)| ft:$(opt:filetype) | $(opt:fileformat) | $(opt:encoding)",
+-	"statusformatr":   "$(bind:ToggleKeyMenu): bindings, $(bind:ToggleHelp): help",
++	"statusformatr":   "$(bind:CommandPalette): commands, $(bind:ToggleExplorer): explorer",
+ 	"statusline":      true,
+ 	"syntax":          true,
+ 	"tabmovement":     false,
+@@ -115,6 +117,7 @@ var DefaultGlobalOnlySettings = map[string]any{
+ 	"colorscheme":    "default",
+ 	"divchars":       "|-",
+ 	"divreverse":     true,
++	"explorerwidth":  float64(30),
+ 	"fakecursor":     defaultFakeCursor(),
+ 	"helpsplit":      "hsplit",
+ 	"infobar":        true,
+@@ -131,6 +134,7 @@ var DefaultGlobalOnlySettings = map[string]any{
+ 	"sucmd":          "sudo",
+ 	"tabhighlight":   false,
+ 	"tabreverse":     true,
++	"terminalheight": float64(12),
+ 	"xterm":          false,
+ }
+ 
+diff --git a/internal/display/infowindow.go b/internal/display/infowindow.go
+index 39ca7277..d04be36e 100644
+--- a/internal/display/infowindow.go
++++ b/internal/display/infowindow.go
+@@ -163,7 +163,7 @@ func (i *InfoWindow) displayBuffer() {
+ 	}
+ }
+ 
+-var keydisplay = []string{"^Q Quit, ^S Save, ^O Open, ^G Help, ^E Command Bar, ^K Cut Line", "^F Find, ^Z Undo, ^Y Redo, ^A Select All, ^D Duplicate Line, ^T New Tab"}
++var keydisplay = []string{"^Q Quit, ^S Save, ^O Open, ^E Commands, ^B Explorer, ^J Terminal", "^F Find, ^Z Undo, ^Y Redo, ^A Select All, ^D Duplicate Line, ^T New Tab"}
+ 
+ func (i *InfoWindow) displayKeyMenu() {
+ 	// TODO: maybe make this based on the actual keybindings
+@@ -209,6 +209,95 @@ func (i *InfoWindow) scrollToSuggestion() {
+ 	}
+ }
+ 
++func trimDisplay(s string, width int) string {
++	if width <= 0 {
++		return ""
++	}
++	out := ""
++	w := 0
++	for _, r := range s {
++		rw := runewidth.RuneWidth(r)
++		if w+rw > width {
++			break
++		}
++		out += string(r)
++		w += rw
++	}
++	return out
++}
++
++func (i *InfoWindow) displayPalette() {
++	if !i.PaletteActive {
++		return
++	}
++
++	items := i.PaletteItems
++	maxRows := 10
++	if len(items) < maxRows {
++		maxRows = len(items)
++	}
++	if maxRows == 0 {
++		maxRows = 1
++	}
++	if maxRows > i.Y {
++		maxRows = i.Y
++	}
++
++	start := 0
++	if len(items) > maxRows && i.PaletteIndex >= maxRows {
++		start = i.PaletteIndex - maxRows + 1
++	}
++
++	baseStyle := config.DefStyle.Reverse(true)
++	if style, ok := config.Colorscheme["statusline"]; ok {
++		baseStyle = style
++	}
++	activeStyle := baseStyle.Reverse(true)
++	if style, ok := config.Colorscheme["statusline.suggestions"]; ok {
++		activeStyle = style.Reverse(true)
++	}
++
++	for row := 0; row < maxRows; row++ {
++		y := i.Y - maxRows + row
++		style := baseStyle
++		text := ""
++		idx := start + row
++		if idx < len(items) {
++			item := items[idx]
++			if idx == i.PaletteIndex {
++				style = activeStyle
++			}
++			text = item.Title
++			if item.Description != "" {
++				text += " - " + item.Description
++			}
++			if item.Binding != "" {
++				text += "  [" + item.Binding + "]"
++			}
++		} else {
++			text = "No matching commands"
++		}
++
++		text = trimDisplay(text, i.Width)
++		x := 0
++		for _, r := range text {
++			rw := runewidth.RuneWidth(r)
++			for j := 0; j < rw; j++ {
++				c := r
++				if j > 0 {
++					c = ' '
++				}
++				screen.SetContent(x, y, c, nil, style)
++				x++
++			}
++		}
++		for x < i.Width {
++			screen.SetContent(x, y, ' ', nil, style)
++			x++
++		}
++	}
++}
++
+ func (i *InfoWindow) Display() {
+ 	if i.HasPrompt || config.GlobalSettings["infobar"].(bool) {
+ 		i.Clear()
+@@ -238,6 +327,11 @@ func (i *InfoWindow) Display() {
+ 		}
+ 	}
+ 
++	if i.PaletteActive {
++		i.displayPalette()
++		return
++	}
++
+ 	if i.HasSuggestions && len(i.Suggestions) > 1 {
+ 		i.scrollToSuggestion()
+ 
+diff --git a/internal/display/tabwindow.go b/internal/display/tabwindow.go
+index ad57963b..491e53a6 100644
+--- a/internal/display/tabwindow.go
++++ b/internal/display/tabwindow.go
+@@ -12,6 +12,7 @@ import (
+ type TabWindow struct {
+ 	Names   []string
+ 	active  int
++	X       int
+ 	Y       int
+ 	Width   int
+ 	hscroll int
+@@ -34,7 +35,7 @@ func (w *TabWindow) LocFromVisual(vloc buffer.Loc) int {
+ 	for i, n := range w.Names {
+ 		x++
+ 		s := util.CharacterCountInString(n)
+-		if vloc.Y == w.Y && vloc.X < x+s {
++		if vloc.Y == w.Y && vloc.X >= w.X && vloc.X < w.X+x+s {
+ 			return i
+ 		}
+ 		x += s
+@@ -128,13 +129,13 @@ func (w *TabWindow) Display() {
+ 					c = ' '
+ 				}
+ 				if x == w.Width-1 && !done {
+-					screen.SetContent(w.Width-1, w.Y, '>', nil, tabBarStyle)
++					screen.SetContent(w.X+w.Width-1, w.Y, '>', nil, tabBarStyle)
+ 					x++
+ 					break
+ 				} else if x == 0 && w.hscroll > 0 {
+-					screen.SetContent(0, w.Y, '<', nil, tabBarStyle)
++					screen.SetContent(w.X, w.Y, '<', nil, tabBarStyle)
+ 				} else if x >= 0 && x < w.Width {
+-					screen.SetContent(x, w.Y, c, nil, style)
++					screen.SetContent(w.X+x, w.Y, c, nil, style)
+ 				}
+ 				x++
+ 			}
+diff --git a/internal/info/infobuffer.go b/internal/info/infobuffer.go
+index 9eb3c365..55bcae62 100644
+--- a/internal/info/infobuffer.go
++++ b/internal/info/infobuffer.go
+@@ -33,11 +33,25 @@ type InfoBuf struct {
+ 	// Is the current message a message from the gutter
+ 	HasGutter bool
+ 
++	// Palette state is used by the command palette prompt. It lives here so the
++	// display package can render it without importing the action package.
++	PaletteActive bool
++	PaletteItems  []PaletteItem
++	PaletteIndex  int
++
+ 	PromptCallback func(resp string, canceled bool)
+ 	EventCallback  func(resp string)
+ 	YNCallback     func(yes bool, canceled bool)
+ }
+ 
++// PaletteItem describes a single row in the command palette.
++type PaletteItem struct {
++	ID          string
++	Title       string
++	Description string
++	Binding     string
++}
++
+ // NewBuffer returns a new infobuffer
+ func NewBuffer() *InfoBuf {
+ 	ib := new(InfoBuf)
+@@ -113,6 +127,11 @@ func (i *InfoBuf) Prompt(prompt string, msg string, ptype string, eventcb func(s
+ 	i.HasPrompt = true
+ 	i.HasMessage, i.HasError, i.HasYN = false, false, false
+ 	i.HasGutter = false
++	i.PaletteActive = ptype == "CommandPalette"
++	if !i.PaletteActive {
++		i.PaletteItems = nil
++		i.PaletteIndex = 0
++	}
+ 	i.PromptCallback = donecb
+ 	i.EventCallback = eventcb
+ 	i.Buffer.Insert(i.Buffer.Start(), msg)
+@@ -168,6 +187,11 @@ func (i *InfoBuf) DonePrompt(canceled bool) {
+ 	if i.YNCallback != nil && hadYN {
+ 		i.YNCallback(i.YNResp, canceled)
+ 	}
++	if canceled || i.PromptType != "CommandPalette" {
++		i.PaletteActive = false
++		i.PaletteItems = nil
++		i.PaletteIndex = 0
++	}
+ }
+ 
+ // Reset resets the infobuffer's msg and info
+@@ -175,4 +199,7 @@ func (i *InfoBuf) Reset() {
+ 	i.Msg = ""
+ 	i.HasPrompt, i.HasMessage, i.HasError = false, false, false
+ 	i.HasGutter = false
++	i.PaletteActive = false
++	i.PaletteItems = nil
++	i.PaletteIndex = 0
+ }
+diff --git a/runtime/help/commands.md b/runtime/help/commands.md
+index 73b25fbc..256fd416 100644
+--- a/runtime/help/commands.md
++++ b/runtime/help/commands.md
+@@ -1,7 +1,12 @@
+ # Command bar
+ 
+-The command bar is opened by pressing `Ctrl-e`. It is a single-line buffer,
+-meaning that all keybindings from a normal buffer are supported (as well
++The command palette is opened by pressing `Ctrl-e`, `Ctrl-Shift-p`, or `F1`.
++It lists commands with descriptions and lets you fuzzy-filter them. Commands
++that need arguments will open the command bar with the command prefilled. You
++can also type a full command directly in the palette, such as `replace a b`.
++
++The command bar is still available from the command palette. It is a single-line
++buffer, meaning that all keybindings from a normal buffer are supported (as well
+ as mouse and selection).
+ 
+ When running a command, you can use extra syntax that micro will expand before
+@@ -12,9 +17,29 @@ does not look up environment variables.
+ 
+ # Commands
+ 
+-Micro provides the following commands that can be executed at the command-bar
+-by pressing `Ctrl-e` and entering the command. Arguments are placed in single
+-quotes here but these are not necessary when entering the command in micro.
++Micro provides the following commands. Arguments are placed in single quotes here
++but these are not necessary when entering the command in micro.
++
++* `command.palette`: opens the command palette.
++
++* `command.prompt`: opens the raw command bar.
++
++* `explorer.toggle`: shows or hides the file explorer.
++
++* `explorer.focus`: focuses the file explorer.
++
++* `explorer.newFile`: creates a new file in the selected folder.
++
++* `explorer.newFolder`: creates a new folder in the selected folder.
++
++* `explorer.rename`: renames the selected file or folder.
++
++* `explorer.delete`: deletes the selected file or folder after confirmation.
++
++* `terminal.toggle`: shows or hides the bottom terminal panel. The panel starts
++   `$SHELL` automatically the first time it opens.
++
++* `terminal.focus`: focuses the bottom terminal panel.
+ 
+ * `bind 'key' 'action'`: creates a keybinding from key to action. See the
+    `keybindings` documentation for more information about binding keys.
+diff --git a/runtime/help/defaultkeys.md b/runtime/help/defaultkeys.md
+index 89e375a9..3d606671 100644
+--- a/runtime/help/defaultkeys.md
++++ b/runtime/help/defaultkeys.md
+@@ -11,9 +11,11 @@ can change it!
+ 
+ | Key       | Description of function                                                                           |
+ |---------- |-------------------------------------------------------------------------------------------------- |
+-| Ctrl-e    | Open a command prompt for running commands (see `> help commands` for a list of valid commands).  |
++| Ctrl-e    | Open the command palette.                                                                         |
++| Ctrl-Shift-p or F1 | Open the command palette.                                                               |
+ | Tab       | In command prompt, it will autocomplete if possible.                                              |
+-| Ctrl-b    | Run a shell command (this will close micro while your command executes).                          |
++| Ctrl-b    | Toggle the file explorer.                                                                         |
++| Ctrl-j    | Toggle the bottom terminal panel.                                                                 |
+ 
+ ### Navigation
+ 
+@@ -34,7 +36,7 @@ can change it!
+ | Ctrl-Home or Ctrl-UpArrow   | Move cursor to start of document                                                          |
+ | Ctrl-End or Ctrl-DownArrow  | Move cursor to end of document                                                            |
+ | Ctrl-l                      | Jump to a line in the file (prompts with #)                                               |
+-| Ctrl-w                      | Cycle between splits in the current tab (use `> vsplit` or `> hsplit` to create a split)  |
++| Ctrl-w                      | Close the current editor                                                  |
+ 
+ ### Tabs
+ 
+@@ -49,12 +51,12 @@ can change it!
+ | Key       | Description of function                   |
+ |---------- |------------------------------------------ |
+ | Ctrl-f    | Find (opens prompt)                       |
+-| Ctrl-n    | Find next instance of current search      |
+-| Ctrl-p    | Find previous instance of current search  |
++| Ctrl-n    | New tab                                   |
++| Ctrl-p    | Open a file prompt                      |
+ 
+-Note: `Ctrl-n` and `Ctrl-p` should be used from the main buffer, not from inside
+-the search prompt. After `Ctrl-f`, press enter to complete the search and then
+-you can use `Ctrl-n` and `Ctrl-p` to cycle through matches.
++Note: `Ctrl-n` should be used from the main buffer, not from inside the search
++prompt. After `Ctrl-f`, press enter to complete the search and then use `Ctrl-n`
++to cycle forward through matches.
+ 
+ ### File Operations
+ 
+@@ -80,7 +82,7 @@ you can use `Ctrl-n` and `Ctrl-p` to cycle through matches.
+ | Ctrl-c                              | Copy selected text                        |
+ | Ctrl-v                              | Paste                                     |
+ | Ctrl-k                              | Cut current line                          |
+-| Ctrl-d                              | Duplicate current line                    |
++| Ctrl-d                              | Select next occurrence (multi-cursor)     |
+ | Ctrl-z                              | Undo                                      |
+ | Ctrl-y                              | Redo                                      |
+ | Alt-UpArrow                         | Move current line or selected lines up    |
+@@ -95,7 +97,7 @@ you can use `Ctrl-n` and `Ctrl-p` to cycle through matches.
+ | Key       | Description of function                                                           |
+ |---------- |---------------------------------------------------------------------------------- |
+ | Ctrl-u    | Toggle macro recording (press Ctrl-u to start recording and press again to stop)  |
+-| Ctrl-j    | Run latest recorded macro                                                         |
++| Ctrl-j    | Toggle the bottom terminal panel                                                  |
+ 
+ ### Multiple cursors
+ 
+@@ -114,9 +116,12 @@ you can use `Ctrl-n` and `Ctrl-p` to cycle through matches.
+ 
+ | Key       | Description of function                                                               |
+ |---------- |-------------------------------------------------------------------------------------- |
+-| Ctrl-g    | Open help file                                                                        |
++| Ctrl-g    | Go to line                                                                             |
+ | Ctrl-h    | Backspace (old terminals do not support the backspace key and use Ctrl+H instead)     |
+ | Ctrl-r    | Toggle the line number ruler                                                          |
++| Ctrl-b    | Toggle the file explorer                                                               |
++| Ctrl-`    | Toggle the bottom terminal panel if your terminal supports it                          |
++| F1        | Open the command palette                                                               |
+ 
+ ### Emacs style actions
+ 
+@@ -133,7 +138,7 @@ Warning! The function keys may not work in all terminals!
+ 
+ | Key   | Description of function   |
+ |------ |-------------------------- |
+-| F1    | Open help                 |
++| F1    | Open command palette      |
+ | F2    | Save                      |
+ | F3    | Find                      |
+ | F4    | Quit                      |
+diff --git a/runtime/help/keybindings.md b/runtime/help/keybindings.md
+index 50dc4057..2f1e5868 100644
+--- a/runtime/help/keybindings.md
++++ b/runtime/help/keybindings.md
+@@ -567,8 +567,10 @@ conventions for text editing defaults.
+     "Ctrl-s":         "Save",
+     "Ctrl-f":         "Find",
+     "Alt-F":          "FindLiteral",
+-    "Ctrl-n":         "FindNext",
+-    "Ctrl-p":         "FindPrevious",
++    "Ctrl-n":         "AddTab",
++    "Ctrl-p":         "command-edit:open ",
++    "CtrlShiftP":     "CommandPalette",
++    "F1":             "CommandPalette",
+     "Alt-[":          "DiffPrevious|CursorStart",
+     "Alt-]":          "DiffNext|CursorEnd",
+     "Ctrl-z":         "Undo",
+@@ -576,7 +578,7 @@ conventions for text editing defaults.
+     "Ctrl-c":         "Copy|CopyLine",
+     "Ctrl-x":         "Cut|CutLine",
+     "Ctrl-k":         "CutLine",
+-    "Ctrl-d":         "Duplicate|DuplicateLine",
++    "Ctrl-d":         "SpawnMultiCursor",
+     "Ctrl-v":         "Paste",
+     "Ctrl-a":         "SelectAll",
+     "Ctrl-t":         "AddTab",
+@@ -592,17 +594,19 @@ conventions for text editing defaults.
+     "CtrlPageDown":   "NextTab|FirstTab",
+     "ShiftPageUp":    "SelectPageUp",
+     "ShiftPageDown":  "SelectPageDown",
+-    "Ctrl-g":         "ToggleHelp",
++    "Ctrl-g":         "command-edit:goto ",
+     "Alt-g":          "ToggleKeyMenu",
+     "Ctrl-r":         "ToggleRuler",
+     "Ctrl-l":         "command-edit:goto ",
+     "Delete":         "Delete",
+-    "Ctrl-b":         "ShellMode",
++    "Ctrl-b":         "ToggleExplorer",
+     "Ctrl-q":         "Quit",
+-    "Ctrl-e":         "CommandMode",
+-    "Ctrl-w":         "NextSplit|FirstSplit",
++    "Ctrl-e":         "CommandPalette",
++    "Ctrl-w":         "Quit",
+     "Ctrl-u":         "ToggleMacro",
+-    "Ctrl-j":         "PlayMacro",
++    "Ctrl-j":         "ToggleTerminal",
++    "Ctrl-`":         "ToggleTerminal",
++    "CtrlShiftS":     "SaveAs",
+     "Insert":         "ToggleOverwriteMode",
+ 
+     // Emacs-style keybindings
+diff --git a/runtime/help/options.md b/runtime/help/options.md
+index 4d086698..f9e2eb3e 100644
+--- a/runtime/help/options.md
++++ b/runtime/help/options.md
+@@ -446,7 +446,7 @@ Here are the available options:
+ * `statusformatr`: format string definition for the right-justified part of the
+    statusline.
+ 
+-    default value: `$(bind:ToggleKeyMenu): bindings, $(bind:ToggleHelp): help`
++    default value: `$(bind:CommandPalette): commands, $(bind:ToggleExplorer): explorer`
+ 
+ * `statusline`: display the status line at the bottom of the screen.
+ 
+@@ -624,7 +624,7 @@ so that you can see what the formatting should look like.
+     "splitright": true,
+     "status": true,
+     "statusformatl": "$(filename) $(modified)$(overwrite)($(line),$(col)) $(status.paste)| ft:$(opt:filetype) | $(opt:fileformat) | $(opt:encoding)",
+-    "statusformatr": "$(bind:ToggleKeyMenu): bindings, $(bind:ToggleHelp): help",
++    "statusformatr": "$(bind:CommandPalette): commands, $(bind:ToggleExplorer): explorer",
+     "statusline": true,
+     "sucmd": "sudo",
+     "syntax": true,

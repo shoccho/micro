@@ -1,7 +1,12 @@
 # Command bar
 
-The command bar is opened by pressing `Ctrl-e`. It is a single-line buffer,
-meaning that all keybindings from a normal buffer are supported (as well
+The command palette is opened by pressing `Ctrl-e`, `Ctrl-Shift-p`, or `F1`.
+It lists commands with descriptions and lets you fuzzy-filter them. Commands
+that need arguments will open the command bar with the command prefilled. You
+can also type a full command directly in the palette, such as `replace a b`.
+
+The command bar is still available from the command palette. It is a single-line
+buffer, meaning that all keybindings from a normal buffer are supported (as well
 as mouse and selection).
 
 When running a command, you can use extra syntax that micro will expand before
@@ -12,9 +17,29 @@ does not look up environment variables.
 
 # Commands
 
-Micro provides the following commands that can be executed at the command-bar
-by pressing `Ctrl-e` and entering the command. Arguments are placed in single
-quotes here but these are not necessary when entering the command in micro.
+Micro provides the following commands. Arguments are placed in single quotes here
+but these are not necessary when entering the command in micro.
+
+* `command.palette`: opens the command palette.
+
+* `command.prompt`: opens the raw command bar.
+
+* `explorer.toggle`: shows or hides the file explorer.
+
+* `explorer.focus`: focuses the file explorer.
+
+* `explorer.newFile`: creates a new file in the selected folder.
+
+* `explorer.newFolder`: creates a new folder in the selected folder.
+
+* `explorer.rename`: renames the selected file or folder.
+
+* `explorer.delete`: deletes the selected file or folder after confirmation.
+
+* `terminal.toggle`: shows or hides the bottom terminal panel. The panel starts
+   `$SHELL` automatically the first time it opens.
+
+* `terminal.focus`: focuses the bottom terminal panel.
 
 * `bind 'key' 'action'`: creates a keybinding from key to action. See the
    `keybindings` documentation for more information about binding keys.

@@ -12,6 +12,7 @@ import (
 type TabWindow struct {
 	Names   []string
 	active  int
+	X       int
 	Y       int
 	Width   int
 	hscroll int
@@ -34,7 +35,7 @@ func (w *TabWindow) LocFromVisual(vloc buffer.Loc) int {
 	for i, n := range w.Names {
 		x++
 		s := util.CharacterCountInString(n)
-		if vloc.Y == w.Y && vloc.X < x+s {
+		if vloc.Y == w.Y && vloc.X >= w.X && vloc.X < w.X+x+s {
 			return i
 		}
 		x += s
@@ -128,13 +129,13 @@ func (w *TabWindow) Display() {
 					c = ' '
 				}
 				if x == w.Width-1 && !done {
-					screen.SetContent(w.Width-1, w.Y, '>', nil, tabBarStyle)
+					screen.SetContent(w.X+w.Width-1, w.Y, '>', nil, tabBarStyle)
 					x++
 					break
 				} else if x == 0 && w.hscroll > 0 {
-					screen.SetContent(0, w.Y, '<', nil, tabBarStyle)
+					screen.SetContent(w.X, w.Y, '<', nil, tabBarStyle)
 				} else if x >= 0 && x < w.Width {
-					screen.SetContent(x, w.Y, c, nil, style)
+					screen.SetContent(w.X+x, w.Y, c, nil, style)
 				}
 				x++
 			}

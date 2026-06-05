@@ -168,11 +168,23 @@ func (h *InfoPane) DoKeyEvent(e KeyEvent) bool {
 
 // HistoryUp cycles history up
 func (h *InfoPane) HistoryUp() {
+	if h.PromptType == "CommandPalette" && h.PaletteActive {
+		if h.PaletteIndex > 0 {
+			h.PaletteIndex--
+		}
+		return
+	}
 	h.UpHistory(h.History[h.PromptType])
 }
 
 // HistoryDown cycles history down
 func (h *InfoPane) HistoryDown() {
+	if h.PromptType == "CommandPalette" && h.PaletteActive {
+		if h.PaletteIndex < len(h.PaletteItems)-1 {
+			h.PaletteIndex++
+		}
+		return
+	}
 	h.DownHistory(h.History[h.PromptType])
 }
 
@@ -190,6 +202,11 @@ func (h *InfoPane) HistorySearchDown() {
 
 // Autocomplete begins autocompletion
 func (h *InfoPane) CommandComplete() {
+	if h.PromptType == "CommandPalette" && h.PaletteActive {
+		h.ExecuteCommand()
+		return
+	}
+
 	b := h.Buf
 	if b.HasSuggestions {
 		b.CycleAutocomplete(true)
@@ -226,6 +243,9 @@ func (h *InfoPane) ExecuteCommand() {
 
 // AbortCommand cancels the prompt
 func (h *InfoPane) AbortCommand() {
+	h.PaletteActive = false
+	h.PaletteItems = nil
+	h.PaletteIndex = 0
 	h.DonePrompt(true)
 }
 

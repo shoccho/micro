@@ -68,6 +68,7 @@ func luaImportMicroConfig() *lua.LTable {
 	pkg := ulua.L.NewTable()
 
 	ulua.L.SetField(pkg, "MakeCommand", luar.New(ulua.L, action.MakeCommand))
+	ulua.L.SetField(pkg, "MakeCommandWithInfo", luar.New(ulua.L, action.MakeCommandWithInfo))
 	ulua.L.SetField(pkg, "FileComplete", luar.New(ulua.L, buffer.FileComplete))
 	ulua.L.SetField(pkg, "HelpComplete", luar.New(ulua.L, action.HelpComplete))
 	ulua.L.SetField(pkg, "OptionComplete", luar.New(ulua.L, action.OptionComplete))
