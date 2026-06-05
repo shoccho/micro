@@ -11,9 +11,11 @@ can change it!
 
 | Key       | Description of function                                                                           |
 |---------- |-------------------------------------------------------------------------------------------------- |
-| Ctrl-e    | Open a command prompt for running commands (see `> help commands` for a list of valid commands).  |
+| Ctrl-e    | Open the command palette.                                                                         |
+| Ctrl-Shift-p or F1 | Open the command palette.                                                               |
 | Tab       | In command prompt, it will autocomplete if possible.                                              |
-| Ctrl-b    | Run a shell command (this will close micro while your command executes).                          |
+| Ctrl-b    | Toggle the file explorer.                                                                         |
+| Ctrl-j    | Toggle the bottom terminal panel.                                                                 |
 
 ### Navigation
 
@@ -34,7 +36,7 @@ can change it!
 | Ctrl-Home or Ctrl-UpArrow   | Move cursor to start of document                                                          |
 | Ctrl-End or Ctrl-DownArrow  | Move cursor to end of document                                                            |
 | Ctrl-l                      | Jump to a line in the file (prompts with #)                                               |
-| Ctrl-w                      | Cycle between splits in the current tab (use `> vsplit` or `> hsplit` to create a split)  |
+| Ctrl-w                      | Close the current editor                                                  |
 
 ### Tabs
 
@@ -49,12 +51,12 @@ can change it!
 | Key       | Description of function                   |
 |---------- |------------------------------------------ |
 | Ctrl-f    | Find (opens prompt)                       |
-| Ctrl-n    | Find next instance of current search      |
-| Ctrl-p    | Find previous instance of current search  |
+| Ctrl-n    | New tab                                   |
+| Ctrl-p    | Open a file prompt                      |
 
-Note: `Ctrl-n` and `Ctrl-p` should be used from the main buffer, not from inside
-the search prompt. After `Ctrl-f`, press enter to complete the search and then
-you can use `Ctrl-n` and `Ctrl-p` to cycle through matches.
+Note: `Ctrl-n` should be used from the main buffer, not from inside the search
+prompt. After `Ctrl-f`, press enter to complete the search and then use `Ctrl-n`
+to cycle forward through matches.
 
 ### File Operations
 
@@ -80,7 +82,7 @@ you can use `Ctrl-n` and `Ctrl-p` to cycle through matches.
 | Ctrl-c                              | Copy selected text                        |
 | Ctrl-v                              | Paste                                     |
 | Ctrl-k                              | Cut current line                          |
-| Ctrl-d                              | Duplicate current line                    |
+| Ctrl-d                              | Select next occurrence (multi-cursor)     |
 | Ctrl-z                              | Undo                                      |
 | Ctrl-y                              | Redo                                      |
 | Alt-UpArrow                         | Move current line or selected lines up    |
@@ -95,7 +97,7 @@ you can use `Ctrl-n` and `Ctrl-p` to cycle through matches.
 | Key       | Description of function                                                           |
 |---------- |---------------------------------------------------------------------------------- |
 | Ctrl-u    | Toggle macro recording (press Ctrl-u to start recording and press again to stop)  |
-| Ctrl-j    | Run latest recorded macro                                                         |
+| Ctrl-j    | Toggle the bottom terminal panel                                                  |
 
 ### Multiple cursors
 
@@ -114,9 +116,12 @@ you can use `Ctrl-n` and `Ctrl-p` to cycle through matches.
 
 | Key       | Description of function                                                               |
 |---------- |-------------------------------------------------------------------------------------- |
-| Ctrl-g    | Open help file                                                                        |
+| Ctrl-g    | Go to line                                                                             |
 | Ctrl-h    | Backspace (old terminals do not support the backspace key and use Ctrl+H instead)     |
 | Ctrl-r    | Toggle the line number ruler                                                          |
+| Ctrl-b    | Toggle the file explorer                                                               |
+| Ctrl-`    | Toggle the bottom terminal panel if your terminal supports it                          |
+| F1        | Open the command palette                                                               |
 
 ### Emacs style actions
 
@@ -133,7 +138,7 @@ Warning! The function keys may not work in all terminals!
 
 | Key   | Description of function   |
 |------ |-------------------------- |
-| F1    | Open help                 |
+| F1    | Open command palette      |
 | F2    | Save                      |
 | F3    | Find                      |
 | F4    | Quit                      |

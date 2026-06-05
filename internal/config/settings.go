@@ -26,6 +26,7 @@ var optionValidators = map[string]optionValidator{
 	"colorcolumn":     validateNonNegativeValue,
 	"colorscheme":     validateColorscheme,
 	"detectlimit":     validateNonNegativeValue,
+	"explorerwidth":   validatePositiveValue,
 	"encoding":        validateEncoding,
 	"fileformat":      validateChoice,
 	"helpsplit":       validateChoice,
@@ -36,6 +37,7 @@ var optionValidators = map[string]optionValidator{
 	"scrollmargin":    validateNonNegativeValue,
 	"scrollspeed":     validateNonNegativeValue,
 	"tabsize":         validatePositiveValue,
+	"terminalheight":  validatePositiveValue,
 	"truecolor":       validateChoice,
 }
 
@@ -96,7 +98,7 @@ var defaultCommonSettings = map[string]any{
 	"splitbottom":     true,
 	"splitright":      true,
 	"statusformatl":   "$(filename) $(modified)$(overwrite)($(line),$(col)) $(status.paste)| ft:$(opt:filetype) | $(opt:fileformat) | $(opt:encoding)",
-	"statusformatr":   "$(bind:ToggleKeyMenu): bindings, $(bind:ToggleHelp): help",
+	"statusformatr":   "$(bind:CommandPalette): commands, $(bind:ToggleExplorer): explorer",
 	"statusline":      true,
 	"syntax":          true,
 	"tabmovement":     false,
@@ -115,6 +117,7 @@ var DefaultGlobalOnlySettings = map[string]any{
 	"colorscheme":    "default",
 	"divchars":       "|-",
 	"divreverse":     true,
+	"explorerwidth":  float64(30),
 	"fakecursor":     defaultFakeCursor(),
 	"helpsplit":      "hsplit",
 	"infobar":        true,
@@ -131,6 +134,7 @@ var DefaultGlobalOnlySettings = map[string]any{
 	"sucmd":          "sudo",
 	"tabhighlight":   false,
 	"tabreverse":     true,
+	"terminalheight": float64(12),
 	"xterm":          false,
 }
 

@@ -1665,11 +1665,28 @@ func (h *BufPane) SelectAll() bool {
 
 // OpenFile opens a new file in the buffer
 func (h *BufPane) OpenFile() bool {
-	InfoBar.Prompt("> ", "open ", "Open", nil, func(resp string, canceled bool) {
-		if !canceled {
-			h.HandleCommand(resp)
-		}
-	})
+	if Panels != nil {
+		Panels.FocusExplorer()
+	}
+	return true
+}
+
+func (h *BufPane) RunCommand() bool {
+	cfg := config.LoadWorkspaceConfig()
+	if cfg == nil || cfg.F5 == "" {
+		InfoBar.Error("No F5 command configured for this workspace. Add one in .microrc.ini")
+		return false
+	}
+	runf, err := shell.RunBackgroundShell(cfg.F5)
+	if err != nil {
+		InfoBar.Error(err)
+		return false
+	}
+	go func() {
+		InfoBar.Message(runf())
+		screen.Redraw()
+	}()
+	InfoBar.Message("Running: ", cfg.F5)
 	return true
 }
 

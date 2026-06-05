@@ -214,6 +214,20 @@ func LoadInput(args []string) []*buffer.Buffer {
 		// Option 1
 		// We go through each file and load it
 		for i := 0; i < len(files); i++ {
+			fileInfo, err := os.Stat(files[i])
+			if err == nil && fileInfo.IsDir() {
+				absPath, err := filepath.Abs(files[i])
+				if err == nil {
+					os.Chdir(absPath)
+					action.Panels.Explorer.Root = absPath
+					action.Panels.Explorer.Refresh()
+					action.Panels.Explorer.Visible = true
+				}
+				if len(buffers) == 0 {
+					buffers = append(buffers, buffer.NewBufferFromStringWithCommand("", "", buffer.BTDefault, command))
+				}
+				continue
+			}
 			buf, err := buffer.NewBufferFromFileWithCommand(files[i], buffer.BTDefault, command)
 			if err != nil {
 				screen.TermMessage(err)
@@ -495,6 +509,7 @@ func DoEvent() {
 		ep.Display()
 	}
 	action.MainTab().Display()
+	action.Panels.Display()
 	action.InfoBar.Display()
 	screen.Screen.Show()
 
@@ -509,6 +524,7 @@ func DoEvent() {
 		}
 	case <-shell.CloseTerms:
 		action.Tabs.CloseTerms()
+		action.Panels.CloseTerms()
 	case event = <-screen.Events:
 	case <-screen.DrawChan():
 		for len(screen.DrawChan()) > 0 {
@@ -536,9 +552,12 @@ func DoEvent() {
 		_, resize := event.(*tcell.EventResize)
 		if resize {
 			action.InfoBar.HandleEvent(event)
+			action.Panels.HandleEvent(event)
 			action.Tabs.HandleEvent(event)
 		} else if action.InfoBar.HasPrompt {
 			action.InfoBar.HandleEvent(event)
+		} else if action.Panels.HandleEvent(event) {
+			// handled by a global panel
 		} else {
 			action.Tabs.HandleEvent(event)
 		}

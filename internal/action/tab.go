@@ -8,6 +8,7 @@ import (
 	"github.com/micro-editor/micro/v2/internal/display"
 	ulua "github.com/micro-editor/micro/v2/internal/lua"
 	"github.com/micro-editor/micro/v2/internal/screen"
+	"github.com/micro-editor/micro/v2/internal/util"
 	"github.com/micro-editor/micro/v2/internal/views"
 	"github.com/micro-editor/tcell/v2"
 )
@@ -22,18 +23,18 @@ type TabList struct {
 // NewTabList creates a TabList from a list of buffers by creating a Tab
 // for each buffer
 func NewTabList(bufs []*buffer.Buffer) *TabList {
-	w, h := screen.Screen.Size()
-	iOffset := config.GetInfoBarOffset()
+	rect := EditorRect()
 	tl := new(TabList)
 	tl.List = make([]*Tab, len(bufs))
 	if len(bufs) > 1 {
 		for i, b := range bufs {
-			tl.List[i] = NewTabFromBuffer(0, 1, w, h-1-iOffset, b)
+			tl.List[i] = NewTabFromBuffer(rect.X, rect.Y+1, rect.W, util.Max(1, rect.H-1), b)
 		}
 	} else {
-		tl.List[0] = NewTabFromBuffer(0, 0, w, h-iOffset, bufs[0])
+		tl.List[0] = NewTabFromBuffer(rect.X, rect.Y, rect.W, rect.H, bufs[0])
 	}
-	tl.TabWindow = display.NewTabWindow(w, 0)
+	tl.TabWindow = display.NewTabWindow(rect.W, rect.Y)
+	tl.TabWindow.X = rect.X
 	tl.Names = make([]string, len(bufs))
 
 	return tl
@@ -81,20 +82,25 @@ func (t *TabList) RemoveTab(id uint64) {
 // that into account
 func (t *TabList) Resize() {
 	w, h := screen.Screen.Size()
+	rect := EditorRect()
 	iOffset := config.GetInfoBarOffset()
 	InfoBar.Resize(w, h-1)
 	if len(t.List) > 1 {
 		for _, p := range t.List {
-			p.Y = 1
-			p.Node.Resize(w, h-1-iOffset)
+			p.X = rect.X
+			p.Y = rect.Y + 1
+			p.Node.Resize(rect.W, util.Max(1, rect.H-1))
 			p.Resize()
 		}
 	} else if len(t.List) == 1 {
-		t.List[0].Y = 0
-		t.List[0].Node.Resize(w, h-iOffset)
+		t.List[0].X = rect.X
+		t.List[0].Y = rect.Y
+		t.List[0].Node.Resize(rect.W, rect.H)
 		t.List[0].Resize()
 	}
-	t.TabWindow.Resize(w, h)
+	t.TabWindow.X = rect.X
+	t.TabWindow.Y = rect.Y
+	t.TabWindow.Resize(rect.W, h-iOffset)
 }
 
 // HandleEvent checks for a resize event or a mouse event on the tab bar
@@ -107,10 +113,10 @@ func (t *TabList) HandleEvent(event tcell.Event) {
 		mx, my := e.Position()
 		switch e.Buttons() {
 		case tcell.Button1:
-			if my == t.Y && len(t.List) > 1 {
-				if mx == 0 {
+			if my == t.Y && len(t.List) > 1 && mx >= t.X && mx < t.X+t.Width {
+				if mx == t.X {
 					t.Scroll(-4)
-				} else if mx == t.Width-1 {
+				} else if mx == t.X+t.Width-1 {
 					t.Scroll(4)
 				} else {
 					ind := t.LocFromVisual(buffer.Loc{mx, my})
@@ -127,12 +133,12 @@ func (t *TabList) HandleEvent(event tcell.Event) {
 				return
 			}
 		case tcell.WheelUp:
-			if my == t.Y && len(t.List) > 1 {
+			if my == t.Y && len(t.List) > 1 && mx >= t.X && mx < t.X+t.Width {
 				t.Scroll(4)
 				return
 			}
 		case tcell.WheelDown:
-			if my == t.Y && len(t.List) > 1 {
+			if my == t.Y && len(t.List) > 1 && mx >= t.X && mx < t.X+t.Width {
 				t.Scroll(-4)
 				return
 			}
@@ -382,7 +388,7 @@ func (t *Tab) Resize() {
 		n := t.GetNode(p.ID())
 		pv := p.GetView()
 		offset := 0
-		if n.X != 0 {
+		if n.X != t.Node.X {
 			offset = 1
 		}
 		pv.X, pv.Y = n.X+offset, n.Y
