@@ -177,6 +177,10 @@ func (p *PanelManager) HandleEvent(event tcell.Event) bool {
 			p.Terminal.HandleEvent(e, term)
 			return true
 		}
+
+		if btn&^(tcell.WheelUp|tcell.WheelDown|tcell.WheelLeft|tcell.WheelRight) != tcell.ButtonNone {
+			p.focus = panelFocusEditor
+		}
 	case *tcell.EventKey, *tcell.EventPaste:
 		if p.focus == panelFocusExplorer && p.Explorer != nil && p.Explorer.Visible {
 			if p.Explorer.HandleEvent(event, explorer) {

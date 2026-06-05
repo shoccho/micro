@@ -120,11 +120,12 @@ func (t *TabList) HandleEvent(event tcell.Event) {
 					t.Scroll(4)
 				} else {
 					ind := t.LocFromVisual(buffer.Loc{mx, my})
-					if ind != -1 {
-						t.SetActive(ind)
-					}
+				if ind != -1 {
+					t.SetActive(ind)
 				}
-				return
+			}
+			Panels.focus = panelFocusEditor
+			return
 			}
 		case tcell.ButtonNone:
 			if t.List[t.Active()].release {
