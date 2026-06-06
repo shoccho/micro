@@ -871,6 +871,8 @@ var BufKeyActions = map[string]BufKeyAction{
 	"Deselect":                  (*BufPane).Deselect,
 	"ClearInfo":                 (*BufPane).ClearInfo,
 	"RunCommand":                (*BufPane).RunCommand,
+	"RunCommand6":               (*BufPane).RunCommand6,
+	"RunCommand7":               (*BufPane).RunCommand7,
 	"None":                      (*BufPane).None,
 
 	// This was changed to InsertNewline but I don't want to break backwards compatibility
@@ -879,10 +881,11 @@ var BufKeyActions = map[string]BufKeyAction{
 
 // BufMouseActions contains the list of all possible mouse actions the bufhandler could execute
 var BufMouseActions = map[string]BufMouseAction{
-	"MousePress":       (*BufPane).MousePress,
-	"MouseDrag":        (*BufPane).MouseDrag,
-	"MouseRelease":     (*BufPane).MouseRelease,
-	"MouseMultiCursor": (*BufPane).MouseMultiCursor,
+	"MousePress":           (*BufPane).MousePress,
+	"MouseDrag":            (*BufPane).MouseDrag,
+	"MouseRelease":         (*BufPane).MouseRelease,
+	"MouseMultiCursor":     (*BufPane).MouseMultiCursor,
+	"MouseGoToDefinition":  (*BufPane).MouseGoToDefinition,
 }
 
 // MultiActions is a list of actions that should be executed multiple

@@ -97,6 +97,7 @@ var bufdefaults = map[string]string{
 	"F3":  "Find",
 	"F4":  "Quit",
 	"F5":  "RunCommand",
+	"F6":  "RunCommand6",
 	"F7":  "Find",
 	"F10": "Quit",
 	"Esc": "Escape,Deselect,ClearInfo,RemoveAllMultiCursors,UnhighlightSearch",
@@ -108,7 +109,8 @@ var bufdefaults = map[string]string{
 	"MouseLeftDrag":    "MouseDrag",
 	"MouseLeftRelease": "MouseRelease",
 	"MouseMiddle":      "PastePrimary",
-	"Ctrl-MouseLeft":   "MouseMultiCursor",
+	"Ctrl-MouseLeft":   "MouseGoToDefinition",
+	"Ctrl-MouseRight":  "MouseMultiCursor",
 
 	"Alt-n":        "SpawnMultiCursor",
 	"Alt-m":        "SpawnMultiCursorSelect",
