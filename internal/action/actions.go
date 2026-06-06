@@ -1677,16 +1677,45 @@ func (h *BufPane) RunCommand() bool {
 		InfoBar.Error("No F5 command configured for this workspace. Add one in .microrc.ini")
 		return false
 	}
-	runf, err := shell.RunBackgroundShell(cfg.F5)
-	if err != nil {
-		InfoBar.Error(err)
+	if Panels != nil {
+		Panels.FocusTerminal()
+		if Panels.Terminal != nil && Panels.Terminal.Terminal != nil {
+			Panels.Terminal.WriteString(cfg.F5 + "\r")
+		}
+	}
+	screen.Redraw()
+	return true
+}
+
+func (h *BufPane) RunCommand6() bool {
+	cfg := config.LoadWorkspaceConfig()
+	if cfg == nil || cfg.F6 == "" {
+		InfoBar.Error("No F6 command configured for this workspace. Add one in .microrc.ini")
 		return false
 	}
-	go func() {
-		InfoBar.Message(runf())
-		screen.Redraw()
-	}()
-	InfoBar.Message("Running: ", cfg.F5)
+	if Panels != nil {
+		Panels.FocusTerminal()
+		if Panels.Terminal != nil && Panels.Terminal.Terminal != nil {
+			Panels.Terminal.WriteString(cfg.F6 + "\r")
+		}
+	}
+	screen.Redraw()
+	return true
+}
+
+func (h *BufPane) RunCommand7() bool {
+	cfg := config.LoadWorkspaceConfig()
+	if cfg == nil || cfg.F7 == "" {
+		InfoBar.Error("No F7 command configured for this workspace. Add one in .microrc.ini")
+		return false
+	}
+	if Panels != nil {
+		Panels.FocusTerminal()
+		if Panels.Terminal != nil && Panels.Terminal.Terminal != nil {
+			Panels.Terminal.WriteString(cfg.F7 + "\r")
+		}
+	}
+	screen.Redraw()
 	return true
 }
 
@@ -2357,6 +2386,133 @@ func (h *BufPane) RemoveAllMultiCursors() bool {
 	}
 	h.Relocate()
 	return true
+}
+
+// MouseGoToDefinition is a mouse action that finds the definition of the
+// identifier under the cursor and jumps to it. Searches the current buffer
+// first, then other open buffers.
+func (h *BufPane) MouseGoToDefinition(e *tcell.EventMouse) bool {
+	b := h.Buf
+	mx, my := e.Position()
+	if my >= h.BufView().Y+h.BufView().Height {
+		return false
+	}
+	mouseLoc := h.LocFromVisual(buffer.Loc{X: mx, Y: my})
+
+	word := h.wordAt(mouseLoc)
+	if word == "" {
+		InfoBar.Message("No identifier under cursor")
+		return false
+	}
+
+	if loc := h.findDefinition(b, word); loc != nil {
+		h.RemoveAllMultiCursors()
+		h.GotoLoc(*loc)
+		InfoBar.Message("Jumped to definition of " + word)
+		return true
+	}
+
+	for _, ob := range buffer.OpenBuffers {
+		if ob == b {
+			continue
+		}
+		if loc := h.findDefinition(ob, word); loc != nil {
+			h.OpenBuffer(ob)
+			h.GotoLoc(*loc)
+			InfoBar.Message("Jumped to definition of " + word)
+			return true
+		}
+	}
+
+	InfoBar.Message("No definition found for " + word)
+	return false
+}
+
+func (h *BufPane) wordAt(loc buffer.Loc) string {
+	b := h.Buf
+	if loc.Y < 0 || loc.Y >= b.LinesNum() {
+		return ""
+	}
+	line := b.LineBytes(loc.Y)
+	lineLen := util.CharacterCount(line)
+	if lineLen == 0 || loc.X >= lineLen {
+		return ""
+	}
+
+	if !util.IsWordChar(charAtLine(line, loc.X)) {
+		return ""
+	}
+
+	start := loc.X
+	for start > 0 {
+		if !util.IsWordChar(charAtLine(line, start-1)) {
+			break
+		}
+		start--
+	}
+
+	end := loc.X
+	for end < lineLen {
+		if !util.IsWordChar(charAtLine(line, end)) {
+			break
+		}
+		end++
+	}
+
+	lineStr := string(line)
+	return util.SliceStartStr(util.SliceEndStr(lineStr, start), end-start)
+}
+
+func charAtLine(line []byte, idx int) rune {
+	i := 0
+	for len(line) > 0 {
+		r, _, size := util.DecodeCharacter(line)
+		if i == idx {
+			return r
+		}
+		line = line[size:]
+		i++
+	}
+	return '\x00'
+}
+
+func (h *BufPane) findDefinition(b *buffer.Buffer, word string) *buffer.Loc {
+	quoted := regexp.QuoteMeta(word)
+	patterns := []string{
+		// Go, Rust
+		`\b(func|fn)\s+` + quoted + `\b`,
+		`\bfunc\s+\([^)]*\)\s+` + quoted + `\b`,
+		// Python, JS, Lua
+		`\b(def|async\s+def|function|sub)\s+` + quoted + `\b`,
+		// Type/class definitions (many languages)
+		`\b(type|class|struct|enum|interface|trait|module|namespace)\s+` + quoted + `\b`,
+		// Variable/constant definitions
+		`\b(var|const|val|let)\s+` + quoted + `\b`,
+		// C/C++ function definition: word(...) {
+		`\b` + quoted + `\b\s*\([^)]*\)\s*\{`,
+		// C/C++ return-type function: type *word(
+		`(static|extern|inline|virtual|const|unsigned|signed|short|long|void|int|char|float|double)\s+\*?\s*` + quoted + `\b`,
+		// C preprocessor defines
+		`#define\s+` + quoted + `\b`,
+		// C typedef, struct, enum, union
+		`(typedef|struct|enum|union)\s+` + quoted + `\b`,
+	}
+
+	for _, pat := range patterns {
+		re, err := regexp.Compile(pat)
+		if err != nil {
+			continue
+		}
+		for i := 0; i < b.LinesNum(); i++ {
+			line := string(b.LineBytes(i))
+			loc := re.FindStringIndex(line)
+			if loc != nil {
+				col := util.CharacterCountInString(line[:loc[0]])
+				return &buffer.Loc{X: col, Y: i}
+			}
+		}
+	}
+	return nil
 }
 
 // None is an action that does nothing

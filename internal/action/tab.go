@@ -124,6 +124,7 @@ func (t *TabList) HandleEvent(event tcell.Event) {
 						t.SetActive(ind)
 					}
 				}
+				Panels.focus = panelFocusEditor
 				return
 			}
 		case tcell.ButtonNone:
@@ -316,6 +317,7 @@ func (t *Tab) HandleEvent(event tcell.Event) {
 					inpane := mx >= v.X && mx < v.X+v.Width && my >= v.Y && my < v.Y+v.Height
 					if inpane {
 						t.SetActive(i)
+						Panels.focus = panelFocusEditor
 						break
 					}
 				}
